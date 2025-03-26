@@ -1,15 +1,18 @@
-import Link from "next/link";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+// Icons
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+  LayoutDashboard,
+  History,
+  Users,
+  Vault,
+  Info,
+  QrCode,
+  Copy,
+} from "lucide-react";
+import Link from "next/link";
+
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   Modal,
   ModalContent,
@@ -17,22 +20,13 @@ import {
   ModalTitle,
   ModalTrigger,
 } from "@/components/ui/modal";
-
-// Icons
 import {
-  LayoutDashboard,
-  History,
-  Users,
-  Vault,
-  Layers,
-  Code2,
-  Palette,
-  AppWindow,
-  Info,
-  QrCode,
-  Copy,
-  Image
-} from "lucide-react";
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface NavItemProps {
   href: string;
@@ -43,12 +37,12 @@ interface NavItemProps {
 }
 
 const NavItem = ({ href, icon, label, isActive, hasSubmenu }: NavItemProps) => (
-  <Link 
+  <Link
     href={href}
     className={cn(
-      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all hover:bg-accent",
+      "hover:bg-accent flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
       isActive && "bg-accent",
-      hasSubmenu && "justify-between"
+      hasSubmenu && "justify-between",
     )}
   >
     <div className="flex items-center gap-3">
@@ -68,7 +62,7 @@ const NavItem = ({ href, icon, label, isActive, hasSubmenu }: NavItemProps) => (
         strokeLinejoin="round"
         className="h-4 w-4"
       >
-        <path d="m9 18 6-6-6-6"/>
+        <path d="m9 18 6-6-6-6" />
       </svg>
     )}
   </Link>
@@ -76,7 +70,7 @@ const NavItem = ({ href, icon, label, isActive, hasSubmenu }: NavItemProps) => (
 
 const Sidebar = () => {
   return (
-    <div className="fixed top-14 bottom-0 w-64 border-r bg-background overflow-y-auto pl-6">
+    <div className="bg-background fixed top-14 bottom-0 w-64 overflow-y-auto border-r pl-6">
       {/* Wallet Info Card */}
       <div className="p-4">
         <Card className="p-4">
@@ -84,7 +78,7 @@ const Sidebar = () => {
             <Avatar className="h-12 w-12">
               <AvatarFallback className="bg-gradient-to-br from-cyan-400 to-blue-500" />
             </Avatar>
-            <div className="text-sm text-muted-foreground">5byCFmkb9B...</div>
+            <div className="text-muted-foreground text-sm">5byCFmkb9B...</div>
             <div className="text-lg font-bold">$0.00</div>
             <div className="flex gap-2">
               <TooltipProvider>
@@ -101,12 +95,18 @@ const Sidebar = () => {
                           <ModalTitle>Receive assets</ModalTitle>
                         </ModalHeader>
                         <div className="space-y-6 p-6">
-                          <div className="space-y-4 rounded-lg bg-accent/50 p-4">
-                            <h3 className="font-semibold">Share your Squad's address or scan the QR</h3>
-                            <p className="text-sm text-muted-foreground">This is the address of your Squad. Deposit funds by scanning the QR code or copying the address below</p>
+                          <div className="bg-accent/50 space-y-4 rounded-lg p-4">
+                            <h3 className="font-semibold">
+                              Share your Squad&apos;s address or scan the QR
+                            </h3>
+                            <p className="text-muted-foreground text-sm">
+                              This is the address of your Squad. Deposit funds
+                              by scanning the QR code or copying the address
+                              below
+                            </p>
                           </div>
                           <div className="flex justify-center">
-                            <div className="bg-white p-3 rounded-lg">
+                            <div className="rounded-lg bg-white p-3">
                               <QrCode className="h-40 w-40" />
                             </div>
                           </div>
@@ -126,17 +126,6 @@ const Sidebar = () => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Copy Address</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="icon">
-                      <Image className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>View NFTs</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
