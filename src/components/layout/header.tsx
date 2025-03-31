@@ -1,61 +1,65 @@
+"use client";
+
+import { LogOut } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useWalletStore } from "@/store/walletStore";
 
 const Header = () => {
+  const { isLoggedIn, reset } = useWalletStore();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    reset();
+    router.push("/");
+  };
+
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex h-14 items-center border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="flex-1 flex justify-center px-6">
-        <div className="max-w-[1000px] w-full flex items-center justify-between">
-          {/* Logo Section */}
-          <div className="flex items-center gap-6 pl-[88px]">
-            <Link href="/" className="flex items-center space-x-2">
-              <span className="font-bold text-xl">MoonWallet</span>
+    <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 h-14 border-b backdrop-blur">
+      <div className="flex h-full justify-center">
+        <div className="flex h-full w-[1064px]">
+          {/* Logo Section - Aligned with sidebar */}
+          <div className="flex w-64 items-center px-3">
+            <Link href="/dashboard" className="flex items-center space-x-2">
+              <span className="text-xl font-bold">🌙 Moon Wallet</span>
             </Link>
           </div>
 
-          {/* Right Section */}
-          <div className="flex items-center space-x-4">
-            {/* Network Status */}
+          {/* Right section - Aligned with content */}
+          <div className="flex flex-1 items-center justify-end gap-4 px-8">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger>
-                  <div className="flex items-center gap-2">
+                  <div className="bg-background/50 flex items-center gap-2 rounded-md border px-3 py-1.5">
                     <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                    <span className="text-sm">Network Status</span>
+                    <span className="text-sm font-medium">Localnet</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>Connected to Mainnet</p>
+                  <p>Connected to Solana Mainnet</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
 
-            {/* Wallet Connection */}
-            <Button variant="outline" className="flex items-center gap-2">
-              <span>Connect Wallet</span>
-            </Button>
-
-            {/* Additional Options */}
-            <Button variant="ghost" size="icon">
-              <span className="sr-only">Additional options</span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
+            {isLoggedIn && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2"
+                onClick={handleLogout}
               >
-                <circle cx="12" cy="12" r="1" />
-                <circle cx="19" cy="12" r="1" />
-                <circle cx="5" cy="12" r="1" />
-              </svg>
-            </Button>
+                <LogOut className="h-4 w-4" />
+                Logout
+              </Button>
+            )}
           </div>
         </div>
       </div>

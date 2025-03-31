@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+
+import Header from "@/components/layout/header";
+
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,20 +17,24 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Moon Wallet - Your Secure Crypto Wallet",
-  description: "A secure and user-friendly cryptocurrency wallet for managing your digital assets",
+  description:
+    "A secure and user-friendly cryptocurrency wallet for managing your digital assets",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className="bg-background h-full">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased h-full`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-screen font-sans antialiased`}
       >
-        {children}
+        <div className="flex min-h-screen flex-col">
+          <Header />
+          <main className="relative flex-1">{children}</main>
+        </div>
       </body>
     </html>
   );

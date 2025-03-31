@@ -1,59 +1,60 @@
+"use client";
+
+import { ArrowDown, ArrowUp } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useWalletStore } from "@/store/walletStore";
 
 export default function DashboardPage() {
+  const { pdaBalance } = useWalletStore();
+
+  const balance = pdaBalance || 0;
+  const usdBalance = balance * 72.45;
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="p-6">
-          <h2 className="font-semibold">Total Balance</h2>
-          <p className="mt-2 text-3xl font-bold">$0.00</p>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="font-semibold">Total Assets</h2>
-          <p className="mt-2 text-3xl font-bold">0</p>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="font-semibold">NFTs</h2>
-          <p className="mt-2 text-3xl font-bold">0</p>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="font-semibold">Transactions</h2>
-          <p className="mt-2 text-3xl font-bold">0</p>
-        </Card>
-      </div>
-
-      {/* Recent Activity */}
-      <Card className="p-6">
-        <h2 className="text-xl font-semibold mb-4">Recent Activity</h2>
-        <div className="text-center text-muted-foreground py-8">
-          No recent activity
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm">
+            <ArrowUp className="mr-2 h-4 w-4" />
+            Send
+          </Button>
+          <Button variant="default" size="sm">
+            <ArrowDown className="mr-2 h-4 w-4" />
+            Deposit
+          </Button>
         </div>
-      </Card>
+      </div>
 
-      {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
-          <div className="space-y-2">
-            <p className="text-muted-foreground">Send, receive, or swap tokens</p>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold mb-4">Network Status</h2>
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-green-500"></div>
-            <span>Connected to Mainnet</span>
-          </div>
-        </Card>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Left Column - Assets */}
+        <div>
+          <Tabs defaultValue="assets">
+            <TabsList>
+              <TabsTrigger value="assets">Assets</TabsTrigger>
+              <TabsTrigger value="nft">NFT</TabsTrigger>
+            </TabsList>
+            <TabsContent value="assets">
+              <Card className="p-4">
+                <div className="space-y-2">
+                  <div className="text-muted-foreground text-sm">
+                    Vault balance
+                  </div>
+                  <div className="text-2xl font-bold">
+                    ${usdBalance.toFixed(2)}
+                  </div>
+                  <div className="text-muted-foreground text-sm">
+                    {balance.toFixed(4)} SOL
+                  </div>
+                </div>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
       </div>
     </div>
   );
-} 
+}

@@ -1,64 +1,76 @@
+"use client";
+
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
+
+import LoginWallet from "@/components/Wallet/LoginWallet";
 import { Button } from "@/components/ui/button";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted">
-      <div className="container mx-auto px-4 py-16">
-        <nav className="flex items-center justify-between mb-16">
-          <div className="text-2xl font-bold">🌙 Moon Wallet</div>
-          <Link href="/dashboard">
-            <Button variant="outline">Launch App</Button>
-          </Link>
-        </nav>
+    <div className="from-background via-background/50 to-muted absolute inset-0 flex items-center justify-center bg-gradient-to-b">
+      {/* Background decorative elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute top-0 -right-[50%] h-[100%] w-[100%] rounded-full bg-blue-500/5 blur-[128px]" />
+        <div className="absolute -bottom-[50%] -left-[50%] h-[100%] w-[100%] rounded-full bg-cyan-500/5 blur-[128px]" />
+      </div>
 
-        <main className="flex flex-col items-center text-center gap-8 py-20">
-          <h1 className="text-5xl sm:text-6xl font-bold tracking-tight max-w-3xl">
-            Your Gateway to{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-cyan-400">
-              Web3
-            </span>{" "}
-            Finance
-          </h1>
-          
-          <p className="text-xl text-muted-foreground max-w-2xl">
-            Secure, simple, and powerful. Manage your digital assets with confidence using Moon Wallet.
-          </p>
+      {/* Main content */}
+      <div className="relative container flex min-h-screen items-center justify-center py-20">
+        <div className="mx-auto flex max-w-[1200px] flex-col items-center justify-center gap-12 text-center">
+          {/* Hero section */}
+          <div className="space-y-6">
+            <h1 className="text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+              Your Gateway to{" "}
+              <span className="bg-gradient-to-r from-blue-500 to-cyan-400 bg-clip-text text-transparent">
+                Web3
+              </span>
+            </h1>
 
-          <div className="flex gap-4 mt-8">
-            <Link href="/dashboard">
-              <Button size="lg">
-                Get Started
-              </Button>
-            </Link>
-            <Link href="https://docs.moonwallet.app" target="_blank">
-              <Button variant="outline" size="lg">
-                Learn More
-              </Button>
-            </Link>
+            <p className="text-muted-foreground mx-auto max-w-2xl text-lg sm:text-xl">
+              Experience the future of digital asset management with our secure,
+              simple, and powerful multisig wallet
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-20">
-            <div className="p-6 rounded-lg border bg-card">
-              <h3 className="text-xl font-semibold mb-2">Secure Storage</h3>
-              <p className="text-muted-foreground">
-                Your assets are protected with industry-leading security measures
+          {/* Action buttons */}
+          <div className="flex w-full max-w-md flex-col justify-center gap-4 sm:flex-row">
+            <Link href="/create-wallet" className="w-full sm:w-auto">
+              <Button
+                className="group w-full bg-gradient-to-r from-blue-500 to-cyan-400 text-white hover:from-blue-600 hover:to-cyan-500"
+                size="lg"
+              >
+                Create Wallet
+                <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
+              </Button>
+            </Link>
+            <div className="w-full sm:w-auto">
+              <LoginWallet />
+            </div>
+          </div>
+
+          {/* Features section */}
+          <div className="grid w-full max-w-4xl grid-cols-1 gap-6 px-4 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-colors hover:bg-white/10">
+              <h3 className="mb-2 text-lg font-semibold">Secure</h3>
+              <p className="text-muted-foreground text-sm">
+                Multi-signature security for your digital assets
               </p>
             </div>
-            <div className="p-6 rounded-lg border bg-card">
-              <h3 className="text-xl font-semibold mb-2">Multi-Chain Support</h3>
-              <p className="text-muted-foreground">
-                Support for multiple blockchains and tokens in one place
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-colors hover:bg-white/10">
+              <h3 className="mb-2 text-lg font-semibold">Simple</h3>
+              <p className="text-muted-foreground text-sm">
+                User-friendly interface for easy management
               </p>
             </div>
-            <div className="p-6 rounded-lg border bg-card">
-              <h3 className="text-xl font-semibold mb-2">DeFi Integration</h3>
-              <p className="text-muted-foreground">
-                Direct access to decentralized finance protocols
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm transition-colors hover:bg-white/10">
+              <h3 className="mb-2 text-lg font-semibold">Powerful</h3>
+              <p className="text-muted-foreground text-sm">
+                Advanced features for complete control
               </p>
             </div>
           </div>
-        </main>
+        </div>
       </div>
     </div>
   );
