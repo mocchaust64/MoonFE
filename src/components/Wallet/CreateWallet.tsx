@@ -17,8 +17,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
-import { connection } from "@/lib/solana/connection";
-import { PROGRAM_ID } from "@/lib/solana/connection";
+import { connection, PROGRAM_ID } from "@/lib/solana/connection";
 import { useWalletStore } from "@/store/walletStore";
 import { getMultisigPDA } from "@/utils/credentialUtils";
 import { createWebAuthnCredential } from "@/utils/webauthnUtils";
@@ -120,6 +119,7 @@ export default function CreateWallet() {
     fetchPdaBalance,
     setIsLoggedIn,
     setWalletKeypair,
+    fetchGuardians,
   } = useWalletStore();
   const [currentStep, setCurrentStep] = useState("details");
   const [walletName, setWalletName] = useState("");
@@ -135,7 +135,6 @@ export default function CreateWallet() {
 
       // 1. Tạo khóa WebAuthn
       const result = await createWebAuthnCredential(
-        walletName || "Moon Wallet",
         walletName || "Moon Wallet",
       );
       const rawIdBase64 = Buffer.from(result.rawId).toString("base64");
@@ -283,6 +282,12 @@ export default function CreateWallet() {
       await fetchPdaBalance();
       setIsLoggedIn(true);
       setWalletKeypair(feePayerKeypair);
+      // Fetch guardians after wallet creation
+      try {
+        await fetchGuardians();
+      } catch (error) {
+        console.error("Error fetching guardians after wallet creation:", error);
+      }
 
       // Redirect to dashboard
       router.push("/dashboard");
@@ -486,19 +491,12 @@ export default function CreateWallet() {
                 </p>
               </div>
               <div className="rounded-lg bg-gray-50 p-4 dark:bg-zinc-900">
-                <p className="text-3xl font-bold">~0.05</p>
+                <p className="text-3xl font-bold">Free</p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
                   Fee (SOL)
                 </p>
               </div>
             </div>
-
-            <Alert className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950">
-              <InfoCircledIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <AlertDescription className="text-blue-700 dark:text-blue-300">
-                Creation fee includes 0.05 SOL platform fee and network fees
-              </AlertDescription>
-            </Alert>
 
             {error && (
               <Alert variant="destructive">

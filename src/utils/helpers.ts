@@ -2,6 +2,18 @@ import { web3 } from "@coral-xyz/anchor";
 
 import { programID } from "./transactionUtils";
 
+// Hàm chuyển đổi từ BigInt (u64) sang bytes theo thứ tự little-endian
+export const bigIntToLeBytes = (
+  value: bigint,
+  bytesLength: number = 8,
+): Uint8Array => {
+  const result = new Uint8Array(bytesLength);
+  for (let i = 0; i < bytesLength; i++) {
+    result[i] = Number((value >> BigInt(8 * i)) & BigInt(0xff));
+  }
+  return result;
+};
+
 // Tạo hàm để lấy multisig PDA dựa vào credential ID
 export const getMultisigPDA = (credentialId: string): web3.PublicKey => {
   // Sử dụng hàm processCredentialIdForPDA để đồng bộ với cách tính trong smart contract

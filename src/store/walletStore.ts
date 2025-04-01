@@ -3,6 +3,7 @@ import { create, StateCreator } from "zustand";
 import { persist, PersistOptions } from "zustand/middleware";
 
 import { connection } from "@/lib/solana/connection";
+import { Guardian, getGuardiansFromBlockchain } from "@/utils/guardianUtils";
 
 interface WalletState {
   // Persistent data (need to be stored)
@@ -14,6 +15,7 @@ interface WalletState {
   // Temporary data (computed or session-only)
   pdaBalance: number;
   walletKeypair: Keypair | null;
+  guardians: Guardian[];
 
   // Actions
   setMultisigAddress: (address: PublicKey | null) => void;
@@ -22,6 +24,7 @@ interface WalletState {
   setIsLoggedIn: (status: boolean) => void;
   setWalletKeypair: (keypair: Keypair | null) => void;
   fetchPdaBalance: () => Promise<void>;
+  fetchGuardians: () => Promise<void>;
   reset: () => void;
 }
 
@@ -48,6 +51,7 @@ export const useWalletStore = create<WalletState>()(
       isLoggedIn: false,
       pdaBalance: 0,
       walletKeypair: null,
+      guardians: [],
 
       // Actions
       setMultisigAddress: (address) => set({ multisigAddress: address }),
@@ -70,11 +74,57 @@ export const useWalletStore = create<WalletState>()(
         }
       },
 
+      // Fetch guardians from blockchain
+      fetchGuardians: async () => {
+        const { multisigAddress } = get();
+        if (!multisigAddress) {
+          console.error(
+            "fetchGuardians: MultisigAddress is null, cannot fetch guardians",
+          );
+          return;
+        }
+
+        try {
+          console.log(
+            "======= Bắt đầu tải danh sách guardians từ blockchain... =======",
+          );
+          console.log("MultisigAddress:", typeof multisigAddress);
+
+          // Đảm bảo multisigAddress là PublicKey
+          const multisigPubkey =
+            typeof multisigAddress === "string"
+              ? new PublicKey(multisigAddress)
+              : multisigAddress;
+
+          console.log(
+            "MultisigAddress đã chuyển đổi:",
+            multisigPubkey.toString(),
+          );
+
+          const guardians = await getGuardiansFromBlockchain(multisigPubkey);
+
+          // Cập nhật danh sách guardians
+          console.log(`Cập nhật store với ${guardians.length} guardians`);
+          set({ guardians });
+
+          // Cập nhật danh sách existingGuardians (chỉ lưu ID)
+          const existingIds = guardians.map((g) => g.id);
+          set({ existingGuardians: existingIds });
+
+          console.log(
+            `Danh sách existingGuardians đã cập nhật: [${existingIds.join(", ")}]`,
+          );
+        } catch (error) {
+          console.error("Lỗi khi tải guardians:", error);
+        }
+      },
+
       reset: () =>
         set({
           multisigAddress: null,
           guardianPDA: null,
           existingGuardians: [],
+          guardians: [],
           isLoggedIn: false,
           pdaBalance: 0,
           walletKeypair: null,
@@ -99,22 +149,46 @@ export const useWalletStore = create<WalletState>()(
       },
       // Custom deserialization for PublicKey
       deserialize: (str: string) => {
-        const state = JSON.parse(str);
-        return {
-          ...state,
-          state: {
-            ...state.state,
-            multisigAddress: state.state.multisigAddress
-              ? new PublicKey(state.state.multisigAddress)
-              : null,
-            guardianPDA: state.state.guardianPDA
-              ? new PublicKey(state.state.guardianPDA)
-              : null,
-            // Reset temporary data
-            pdaBalance: 0,
-            walletKeypair: null,
-          },
-        };
+        try {
+          const state = JSON.parse(str);
+
+          // Chuyển đổi lại các chuỗi thành đối tượng PublicKey
+          const multisigAddress = state.state.multisigAddress
+            ? new PublicKey(state.state.multisigAddress)
+            : null;
+
+          const guardianPDA = state.state.guardianPDA
+            ? new PublicKey(state.state.guardianPDA)
+            : null;
+
+          return {
+            ...state,
+            state: {
+              ...state.state,
+              multisigAddress,
+              guardianPDA,
+              // Reset temporary data
+              pdaBalance: 0,
+              walletKeypair: null,
+              guardians: [], // Reset guardians array
+            },
+          };
+        } catch (error) {
+          console.error("Error deserializing state:", error);
+          // Return default state if deserialization fails
+          return {
+            version: 0,
+            state: {
+              multisigAddress: null,
+              guardianPDA: null,
+              existingGuardians: [],
+              isLoggedIn: false,
+              pdaBalance: 0,
+              walletKeypair: null,
+              guardians: [],
+            },
+          };
+        }
       },
     },
   ),

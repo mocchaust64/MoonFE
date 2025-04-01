@@ -74,15 +74,12 @@ export const createWebAuthnCredential = async (
     const attestationBuffer = new Uint8Array(response.attestationObject);
     const attestationObject = CBOR.decode(attestationBuffer.buffer);
 
-    if (!attestationObject || !CBOR.isAttestationObject(attestationObject)) {
-      throw new Error("Invalid attestation object format");
-    }
-
     // Lấy thông tin credentialId
     const credentialId = bufferToHex(credential.rawId);
     console.log("Raw credential ID buffer:", new Uint8Array(credential.rawId));
     console.log("Credentials raw ID as hex:", credentialId);
 
+    // Phân tích authenticatorData để lấy public key
     const authData = attestationObject.authData;
     const publicKeyBytes = extractPublicKeyFromAuthData(authData);
     const publicKey = bufferToHex(publicKeyBytes);
@@ -133,10 +130,6 @@ function extractPublicKeyFromAuthData(authData: Uint8Array): Uint8Array {
   try {
     // Giải mã COSE public key (sử dụng thư viện CBOR nếu có)
     const publicKeyObj = CBOR.decode(cosePublicKey);
-
-    if (!publicKeyObj || !CBOR.isCOSEKey(publicKeyObj)) {
-      throw new Error("Invalid COSE key format");
-    }
 
     // Lấy coordinaates x và y từ -2 và -3 (theo COSE Web Key)
     const x = publicKeyObj.get(-2);
@@ -752,11 +745,11 @@ export const getWebAuthnAssertionForLogin = async (
       success: true,
       rawId: new Uint8Array(assertion.rawId),
     };
-  } catch (error: unknown) {
+  } catch (error) {
     console.error("Lỗi khi xác thực WebAuthn:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Không thể xác thực",
+      error: (error as Error).message || "Không thể xác thực",
     };
   }
 };
