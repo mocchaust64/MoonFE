@@ -96,8 +96,7 @@ export function InviteGuardianModal({
       const newInviteCode = generateRandomCode(8);
 
       // Tạo link mời với URL hiện tại
-      const baseUrl =
-        process.env.NEXT_PUBLIC_NGROK_URL || window.location.origin;
+      const baseUrl = "https://wallet.moonraise.xyz/";
       const newInviteLink = `${baseUrl}/guardian/${newInviteCode}`;
 
       // Lưu thông tin vào Firebase

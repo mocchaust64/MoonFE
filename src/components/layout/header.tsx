@@ -40,7 +40,7 @@ const Header = () => {
                 <TooltipTrigger>
                   <div className="bg-background/50 flex items-center gap-2 rounded-md border px-3 py-1.5">
                     <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                    <span className="text-sm font-medium">Localnet</span>
+                    <span className="text-sm font-medium">Devnet</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>

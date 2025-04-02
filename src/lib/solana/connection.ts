@@ -1,7 +1,7 @@
 import { Connection, PublicKey, Commitment } from "@solana/web3.js";
 
 const RPC_ENDPOINT =
-  process.env.NEXT_PUBLIC_RPC_ENDPOINT || "http://127.0.0.1:8899";
+  process.env.NEXT_PUBLIC_RPC_ENDPOINT || "https://api.devnet.solana.com";
 const PROGRAM_ID_STRING =
   process.env.NEXT_PUBLIC_PROGRAM_ID ||
   "BWzgXaQGxFk1ojzJ1Y2c91QTw7uF9zK9AJcGkdJA3VZt";
