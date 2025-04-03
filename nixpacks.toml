@@ -1,10 +1,9 @@
 [phases.setup]
-nixPkgs = ['nodejs-20_x', 'python312']
-aptPkgs = ['build-essential', 'libudev-dev']
-providers = ["node", "python"]
+nixPkgs = ['nodejs', 'python3']
+aptPkgs = ['build-essential']
 
 [phases.install]
-cmds = ['npm ci']
+cmds = ['npm install']
 
 [phases.build]
 cmds = ['npm run build']
