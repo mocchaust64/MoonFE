@@ -11,17 +11,17 @@ import {
   updateDoc,
 } from "firebase/firestore";
 
-import { GuardianData, InviteData } from "@/components/Wallet/Guardian/types";
+import { GuardianData, InviteData } from "@/types/guardian";
 
 import { db } from "./config";
 
-// Lưu thông tin invitation khi tạo mã mời
+// Save invitation data when creating invite code
 export const saveInvitation = async (
   inviteData: Omit<InviteData, "createdAt">,
 ): Promise<string> => {
   try {
     const inviteRef = doc(collection(db, "invitations"));
-    // Thêm trường inviteCode nếu chưa có
+    // Add inviteCode if not provided
     const inviteCode = inviteData.inviteCode || inviteRef.id;
 
     await setDoc(inviteRef, {
@@ -30,7 +30,7 @@ export const saveInvitation = async (
       createdAt: serverTimestamp(),
     });
 
-    // Tạo document theo inviteCode để dễ truy vấn
+    // Create lookup document for easy querying
     await setDoc(doc(db, "invitations_lookup", inviteCode), {
       inviteId: inviteRef.id,
       createdAt: serverTimestamp(),
@@ -38,23 +38,23 @@ export const saveInvitation = async (
 
     return inviteCode;
   } catch (error) {
-    console.error("Lỗi khi lưu invitation:", error);
+    console.error("Error saving invitation:", error);
     throw error;
   }
 };
 
-// Lấy thông tin invitation theo mã mời
+// Get invitation data by invite code
 export const getInvitation = async (
   inviteCode: string,
 ): Promise<InviteData | null> => {
   try {
-    // Tìm trong bảng lookup
+    // Find in lookup table
     const lookupRef = doc(db, "invitations_lookup", inviteCode);
     const lookupSnap = await getDoc(lookupRef);
 
     if (!lookupSnap.exists()) return null;
 
-    // Lấy ID của document gốc
+    // Get original document ID
     const inviteId = lookupSnap.data().inviteId;
     const inviteRef = doc(db, "invitations", inviteId);
     const inviteSnap = await getDoc(inviteRef);
@@ -63,24 +63,24 @@ export const getInvitation = async (
 
     return inviteSnap.data() as InviteData;
   } catch (error) {
-    console.error("Lỗi khi lấy invitation:", error);
+    console.error("Error getting invitation:", error);
     return null;
   }
 };
 
-// Lưu thông tin guardian khi đăng ký
+// Save guardian data during registration
 export const saveGuardianData = async (
   guardianData: Omit<GuardianData, "createdAt">,
 ): Promise<void> => {
   try {
     const { inviteCode } = guardianData;
-    // Lưu thông tin guardian
+    // Save guardian info
     await setDoc(doc(db, "guardians", inviteCode), {
       ...guardianData,
       createdAt: serverTimestamp(),
     });
 
-    // Cập nhật trạng thái invitation
+    // Update invitation status
     const lookupRef = doc(db, "invitations_lookup", inviteCode);
     const lookupSnap = await getDoc(lookupRef);
 
@@ -92,12 +92,12 @@ export const saveGuardianData = async (
       });
     }
   } catch (error) {
-    console.error("Lỗi khi lưu guardian data:", error);
+    console.error("Error saving guardian data:", error);
     throw error;
   }
 };
 
-// Lấy thông tin guardian theo mã mời
+// Get guardian data by invite code
 export const getGuardianData = async (
   inviteCode: string,
 ): Promise<GuardianData | null> => {
@@ -109,12 +109,12 @@ export const getGuardianData = async (
 
     return guardianSnap.data() as GuardianData;
   } catch (error) {
-    console.error("Lỗi khi lấy guardian data:", error);
+    console.error("Error getting guardian data:", error);
     return null;
   }
 };
 
-// Cập nhật trạng thái guardian sau khi hoàn tất
+// Update guardian status after completion
 export const updateGuardianStatus = async (
   inviteCode: string,
   status: "pending" | "ready" | "completed",
@@ -128,10 +128,10 @@ export const updateGuardianStatus = async (
       if (txSignature) updateData.txSignature = txSignature;
     }
 
-    // Cập nhật guardian
+    // Update guardian
     await updateDoc(doc(db, "guardians", inviteCode), updateData);
 
-    // Cập nhật invitation
+    // Update invitation
     const lookupRef = doc(db, "invitations_lookup", inviteCode);
     const lookupSnap = await getDoc(lookupRef);
 
@@ -140,43 +140,42 @@ export const updateGuardianStatus = async (
       await updateDoc(doc(db, "invitations", inviteId), { status });
     }
   } catch (error) {
-    console.error("Lỗi khi cập nhật trạng thái guardian:", error);
+    console.error("Error updating guardian status:", error);
     throw error;
   }
 };
 
-// Lấy danh sách mã mời đang chờ xử lý
+// Get list of pending invites
 export const getPendingInvites = async (
-  multisigAddress: string,
+  multisigPDA: string,
 ): Promise<string[]> => {
   try {
-    console.log(`Đang tìm các guardian chờ xác nhận cho ví ${multisigAddress}`);
+    console.log(`Finding pending guardians for wallet ${multisigPDA}`);
 
-    // Chỉ lọc theo multisigAddress và status, bỏ qua lọc theo ownerId
     const invitesQuery = query(
       collection(db, "invitations"),
-      where("multisigAddress", "==", multisigAddress),
+      where("multisigPDA", "==", multisigPDA),
       where("status", "==", "ready"),
     );
 
     const querySnapshot = await getDocs(invitesQuery);
     console.log(
-      `Tìm thấy ${querySnapshot.size} guardian đang chờ xác nhận cho ví ${multisigAddress}`,
+      `Found ${querySnapshot.size} pending guardians for wallet ${multisigPDA}`,
     );
 
     return querySnapshot.docs.map((doc) => doc.data().inviteCode);
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách mã mời:", error);
+    console.error("Error getting pending invites:", error);
     return [];
   }
 };
 
-// Xóa guardian và invitation data cũ (có thể gọi bằng Cloud Function)
+// Clean up old guardian and invitation data (can be called by Cloud Function)
 export const cleanupOldData = async (): Promise<void> => {
   try {
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
 
-    // Tìm các invitation cũ có trạng thái là pending hoặc ready
+    // Find old invitations with pending or ready status
     const oldInvitesQuery = query(
       collection(db, "invitations"),
       where("createdAt", "<", thirtyMinutesAgo),
@@ -184,67 +183,67 @@ export const cleanupOldData = async (): Promise<void> => {
     );
 
     const querySnapshot = await getDocs(oldInvitesQuery);
-    console.log(`Tìm thấy ${querySnapshot.size} invitation cần dọn dẹp.`);
+    console.log(`Found ${querySnapshot.size} invitations to clean up`);
 
-    // Xóa từng invitation cũ
+    // Delete each old invitation
     const batch = querySnapshot.docs.map(async (docSnapshot) => {
       const inviteCode = docSnapshot.data().inviteCode;
-      console.log(`Đang xóa dữ liệu cho invitation: ${inviteCode}`);
+      console.log(`Deleting data for invitation: ${inviteCode}`);
 
-      // Xóa lookup
+      // Delete lookup
       await deleteDoc(doc(db, "invitations_lookup", inviteCode));
 
-      // Xóa guardian data nếu có
+      // Delete guardian data if exists
       const guardianRef = doc(db, "guardians", inviteCode);
       const guardianSnap = await getDoc(guardianRef);
       if (guardianSnap.exists()) {
         await deleteDoc(guardianRef);
       }
 
-      // Xóa invitation
+      // Delete invitation
       await deleteDoc(docSnapshot.ref);
     });
 
     await Promise.all(batch);
   } catch (error) {
-    console.error("Lỗi khi dọn dẹp dữ liệu cũ:", error);
+    console.error("Error cleaning up old data:", error);
   }
 };
 
-// Xóa guardian, invitation và lookup data khi hoàn tất đăng ký
+// Delete guardian, invitation and lookup data after registration completion
 export const deleteGuardianData = async (
   inviteCode: string,
 ): Promise<boolean> => {
   try {
-    console.log(`Đang xóa dữ liệu guardian với mã mời: ${inviteCode}`);
+    console.log(`Deleting guardian data for invite code: ${inviteCode}`);
 
-    // Xóa guardian data
+    // Delete guardian data
     const guardianRef = doc(db, "guardians", inviteCode);
     const guardianSnap = await getDoc(guardianRef);
     if (guardianSnap.exists()) {
       await deleteDoc(guardianRef);
-      console.log(`Đã xóa guardian data với mã mời: ${inviteCode}`);
+      console.log(`Deleted guardian data for invite code: ${inviteCode}`);
     }
 
-    // Tìm và xóa invitation
+    // Find and delete invitation
     const lookupRef = doc(db, "invitations_lookup", inviteCode);
     const lookupSnap = await getDoc(lookupRef);
 
     if (lookupSnap.exists()) {
       const inviteId = lookupSnap.data().inviteId;
 
-      // Xóa invitation
+      // Delete invitation
       await deleteDoc(doc(db, "invitations", inviteId));
-      console.log(`Đã xóa invitation với ID: ${inviteId}`);
+      console.log(`Deleted invitation with ID: ${inviteId}`);
 
-      // Xóa lookup
+      // Delete lookup
       await deleteDoc(lookupRef);
-      console.log(`Đã xóa invitation lookup với mã mời: ${inviteCode}`);
+      console.log(`Deleted invitation lookup for invite code: ${inviteCode}`);
     }
 
     return true;
   } catch (error) {
-    console.error("Lỗi khi xóa dữ liệu guardian:", error);
+    console.error("Error deleting guardian data:", error);
     return false;
   }
 };

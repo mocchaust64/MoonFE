@@ -6,27 +6,15 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { connection, PROGRAM_ID } from "@/lib/solana/connection";
+import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
+import { connection } from "@/lib/solana";
 import { useWalletStore } from "@/store/walletStore";
 import { getMultisigPDA } from "@/utils/credentialUtils";
 import { getWebAuthnAssertionForLogin } from "@/utils/webauthnUtils";
 
-// Hàm chuyển đổi từ BigInt (u64) sang bytes theo thứ tự little-endian
-const bigIntToLeBytes = (
-  value: bigint,
-  bytesLength: number = 8,
-): Uint8Array => {
-  const result = new Uint8Array(bytesLength);
-  for (let i = 0; i < bytesLength; i++) {
-    result[i] = Number((value >> BigInt(8 * i)) & BigInt(0xff));
-  }
-  return result;
-};
-
 export default function LoginWallet() {
   const router = useRouter();
-  const { setMultisigAddress, setIsLoggedIn, setGuardianPDA, fetchPdaBalance } =
-    useWalletStore();
+  const { setMultisigPDA, setWalletData } = useWalletStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,58 +23,53 @@ export default function LoginWallet() {
       setIsLoading(true);
       setError("");
 
-      // 1. Lấy assertion từ WebAuthn
-      console.log("Đang lấy assertion từ WebAuthn...");
+      // 1. Lấy WebAuthn assertion
       const assertionResult = await getWebAuthnAssertionForLogin("", true);
-
       if (!assertionResult.success || !assertionResult.rawId) {
-        throw new Error(
-          assertionResult.error || "Không thể xác thực với thiết bị",
-        );
+        throw new Error("Không thể xác thực với thiết bị");
       }
 
-      // 2. Chuyển đổi rawId thành base64
-      const rawIdBase64 = Buffer.from(assertionResult.rawId).toString("base64");
-      console.log("Raw ID (base64):", rawIdBase64);
-
-      // 3. Tính PDA từ credential ID
-      const multisigPDA = getMultisigPDA(rawIdBase64);
-      console.log("Đã tính PDA:", multisigPDA.toString());
-      setMultisigAddress(multisigPDA);
-
-      // 4. Kiểm tra ví tồn tại
-      console.log("Đang kiểm tra ví trên Solana...");
-      const walletAccount = await connection.getAccountInfo(multisigPDA);
-
-      if (!walletAccount) {
-        console.error("Không tìm thấy ví với PDA:", multisigPDA.toString());
-        throw new Error(
-          "Không tìm thấy ví với credential này. Vui lòng tạo ví mới.",
-        );
-      }
-
-      // 5. Tính PDA cho guardian (owner có ID = 1)
-      const guardianId = BigInt(1);
-      const guardianIdBytes = bigIntToLeBytes(guardianId);
-
-      const [guardianPDAAddress] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("guardian").subarray(0),
-          multisigPDA.toBuffer(),
-          guardianIdBytes,
-        ],
-        PROGRAM_ID,
+      // 2. Chuyển đổi credential ID sang các format cần thiết
+      const credentialIdHex = Buffer.from(assertionResult.rawId).toString(
+        "hex",
       );
+      const rawIdBase64 = Buffer.from(assertionResult.rawId).toString("base64");
 
-      setGuardianPDA(guardianPDAAddress);
+      let multisigPDA: PublicKey;
 
-      // 6. Lấy số dư ví
-      await fetchPdaBalance();
+      // 3. Thử tìm trong Firebase (cho guardian thêm sau)
+      const mapping = await getWalletByCredentialId(credentialIdHex);
 
-      setIsLoggedIn(true);
+      if (mapping) {
+        console.log("Tìm thấy guardian trong Firebase");
+        multisigPDA = new PublicKey(mapping.walletAddress);
+      } else {
+        console.log("Không tìm thấy trong Firebase, thử tính PDA cho owner");
+        // 4. Nếu không có trong Firebase -> thử tính PDA (cho guardian đầu tiên/owner)
+        multisigPDA = getMultisigPDA(rawIdBase64);
+      }
+
+      // 5. Kiểm tra ví trên blockchain
+      console.log("Kiểm tra ví tại địa chỉ:", multisigPDA.toString());
+      const multisigAccount = await connection.getAccountInfo(multisigPDA);
+
+      if (!multisigAccount) {
+        throw new Error(
+          "Không tìm thấy ví trên blockchain. Có thể bạn chưa tạo ví hoặc credential không hợp lệ.",
+        );
+      }
+
+      // 6. Login thành công
+      console.log("Login thành công với ví:", multisigPDA.toString());
+      setMultisigPDA(multisigPDA.toString());
+      setWalletData({
+        lastUpdated: Date.now(),
+        multisigPDA: multisigPDA.toString(),
+      });
       router.push("/dashboard");
-    } catch (error) {
-      console.error("Lỗi khi đăng nhập:", error);
+    } catch (err) {
+      console.error("Lỗi khi đăng nhập:", err);
+      setError(err instanceof Error ? err.message : "Lỗi không xác định");
     } finally {
       setIsLoading(false);
     }
@@ -101,7 +84,7 @@ export default function LoginWallet() {
         size="lg"
         className="border-2 transition-colors hover:bg-white hover:text-black"
       >
-        {isLoading ? "Connect Walet..." : "Connect Wallet"}
+        {isLoading ? "Connect Wallet..." : "Connect Wallet"}
       </Button>
       {error && <div className="mt-2 text-sm text-red-500">{error}</div>}
     </div>

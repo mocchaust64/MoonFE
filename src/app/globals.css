@@ -119,4 +119,31 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Prevent text size adjustment after orientation changes in iOS */
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Better handling of responsive containers */
+  img,
+  svg,
+  video,
+  canvas,
+  audio,
+  iframe,
+  embed,
+  object {
+    display: block;
+    max-width: 100%;
+  }
+
+  /* Improved touch targets for interactive elements */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
 }

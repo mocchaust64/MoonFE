@@ -1,15 +1,12 @@
 import { PublicKey } from "@solana/web3.js";
 
-import { PROGRAM_ID } from "@/lib/solana/connection";
-import { connection } from "@/lib/solana/connection";
-import { bigIntToLeBytes } from "@/utils/helpers";
+import { PROGRAM_ID, connection } from "@/lib/solana/index";
+import { bigIntToLeBytes } from "@/utils/bufferUtils";
 
 // Định nghĩa interface cho đối tượng Guardian
 export interface Guardian {
   id: number;
   address: string;
-  name: string;
-  isOwner: boolean;
   isActive: boolean;
   recoveryHash: string;
   webauthnPubkey?: string;
@@ -18,30 +15,25 @@ export interface Guardian {
 
 /**
  * Hàm lấy danh sách guardians từ blockchain
- * @param multisigAddress Địa chỉ multisig
+ * @param multisigPDA Địa chỉ multisig
  * @param maxGuardians Số lượng guardian tối đa cần kiểm tra
  * @returns Danh sách các guardian đã tìm thấy
  */
 export async function getGuardiansFromBlockchain(
-  multisigAddress: PublicKey | string,
+  multisigPDA: PublicKey | string,
   maxGuardians: number = 8,
 ): Promise<Guardian[]> {
   const guardians: Guardian[] = [];
 
-  if (!multisigAddress) {
+  if (!multisigPDA) {
     console.error("Missing multisig address");
     return guardians;
   }
 
-  // Chuyển đổi multisigAddress thành PublicKey nếu nó là chuỗi
+  // Chuyển đổi multisigPDA thành PublicKey nếu nó là chuỗi
   const multisigPubkey =
-    typeof multisigAddress === "string"
-      ? new PublicKey(multisigAddress)
-      : multisigAddress;
+    typeof multisigPDA === "string" ? new PublicKey(multisigPDA) : multisigPDA;
 
-  console.log(`Fetching guardians for multisig: ${multisigPubkey.toString()}`);
-
-  // Kiểm tra guardian từ ID 1 đến maxGuardians
   for (let i = 1; i <= maxGuardians; i++) {
     try {
       // Tính PDA cho guardian với ID i
@@ -81,7 +73,6 @@ export async function getGuardiansFromBlockchain(
             guardianPDA,
           );
           guardians.push(guardian);
-          console.log(`Successfully parsed guardian: ${guardian.name}`);
         } catch (parseError) {
           console.error(`Error parsing guardian data for ID ${i}:`, parseError);
         }
@@ -120,12 +111,12 @@ function parseGuardianData(
   try {
     // Parse dữ liệu theo cấu trúc của Guardian account từ IDL
 
-    // Đọc wallet address (32 bytes)
+    // 1. Đọc wallet address (32 bytes)
     const walletBytes = guardianData.slice(0, 32);
     const wallet = new PublicKey(walletBytes);
     console.log(`Wallet address parsed: ${wallet.toString()}`);
 
-    // Đọc guardian_id (8 bytes - u64)
+    // 2. Đọc guardian_id (8 bytes - u64)
     const guardianIdBytes = guardianData.slice(32, 40);
     let guardianId = BigInt(0);
     for (let i = 0; i < 8; i++) {
@@ -133,61 +124,31 @@ function parseGuardianData(
     }
     console.log(`Guardian ID parsed: ${guardianId}`);
 
-    // Đọc name (string dài tối đa 32 bytes)
-    const nameLength = new DataView(
-      guardianData.buffer,
-      guardianData.byteOffset + 40,
-      4,
-    ).getUint32(0, true);
-    console.log(`Guardian name length: ${nameLength}`);
-
-    if (nameLength > 100) {
-      throw new Error("Invalid name length");
-    }
-
-    // Vị trí bắt đầu của name bytes
-    const nameOffset = 44;
-    const nameBytes = guardianData.slice(nameOffset, nameOffset + nameLength);
-    const name = new TextDecoder().decode(nameBytes);
-    console.log(`Guardian name parsed: ${name}`);
-
-    // Vị trí tiếp theo sau name
-    let currentOffset = nameOffset + nameLength;
-
-    // Đọc is_active (1 byte)
-    const isActive = guardianData[currentOffset] === 1;
+    // 3. Đọc is_active (1 byte)
+    const isActive = guardianData[40] === 1;
     console.log(`Is active: ${isActive}`);
-    currentOffset += 1;
 
-    // Đọc recovery_hash (32 bytes)
-    const recoveryHash = guardianData.slice(currentOffset, currentOffset + 32);
+    // 4. Đọc recovery_hash (32 bytes)
+    const recoveryHash = guardianData.slice(41, 73);
     const recoveryHashHex = Buffer.from(recoveryHash).toString("hex");
-    currentOffset += 32;
+    console.log(`Recovery hash: ${recoveryHashHex.slice(0, 10)}...`);
 
-    // Đọc is_owner (1 byte)
-    const isOwner = guardianData[currentOffset] === 1;
-    console.log(`Is owner: ${isOwner}`);
-    currentOffset += 1;
-
-    // Đọc webauthn_pubkey (option<[u8; 33]>)
+    // 5. Đọc webauthn_pubkey (option<[u8; 33]>)
     let webauthnPubkey: string | undefined;
-    const hasWebauthn = guardianData[currentOffset] === 1;
-    currentOffset += 1;
-
+    const hasWebauthn = guardianData[73] === 1;
     if (hasWebauthn) {
-      const webauthnKey = guardianData.slice(currentOffset, currentOffset + 33);
+      const webauthnKey = guardianData.slice(74, 107);
       webauthnPubkey = Buffer.from(webauthnKey).toString("hex");
-      currentOffset += 33;
+      console.log(`WebAuthn pubkey: ${webauthnPubkey.slice(0, 10)}...`);
     }
 
-    // Đọc bump (1 byte)
-    const bump = guardianData[currentOffset];
+    // 6. Đọc bump (1 byte)
+    const bump = guardianData[hasWebauthn ? 107 : 74];
+    console.log(`Bump: ${bump}`);
 
     return {
       id,
       address: guardianPDA.toString(),
-      name,
-      isOwner,
       isActive,
       recoveryHash: recoveryHashHex,
       webauthnPubkey,
@@ -201,24 +162,22 @@ function parseGuardianData(
 
 /**
  * Hàm lấy thông tin chi tiết về một guardian
- * @param multisigAddress Địa chỉ multisig
+ * @param multisigPDA Địa chỉ multisig
  * @param guardianId ID của guardian cần lấy thông tin
  * @returns Thông tin chi tiết của guardian hoặc null nếu không tìm thấy
  */
 export async function getGuardianInfo(
-  multisigAddress: PublicKey | string,
+  multisigPDA: PublicKey | string,
   guardianId: number,
 ): Promise<Guardian | null> {
-  if (!multisigAddress) {
+  if (!multisigPDA) {
     console.error("Missing multisig address");
     return null;
   }
 
-  // Chuyển đổi multisigAddress thành PublicKey nếu nó là chuỗi
+  // Chuyển đổi multisigPDA thành PublicKey nếu nó là chuỗi
   const multisigPubkey =
-    typeof multisigAddress === "string"
-      ? new PublicKey(multisigAddress)
-      : multisigAddress;
+    typeof multisigPDA === "string" ? new PublicKey(multisigPDA) : multisigPDA;
 
   try {
     // Tính PDA cho guardian với ID được chọn
@@ -267,14 +226,5 @@ export const hashRecoveryPhrase = async (
   const inputBytes = new Uint8Array(32);
   inputBytes.set(phraseBytes.slice(0, Math.min(phraseBytes.length, 32)));
   const hashBuffer = await crypto.subtle.digest("SHA-256", inputBytes);
-  return new Uint8Array(hashBuffer);
-};
-
-export const hashCredentialId = async (
-  credentialId: string,
-): Promise<Uint8Array> => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(credentialId);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   return new Uint8Array(hashBuffer);
 };

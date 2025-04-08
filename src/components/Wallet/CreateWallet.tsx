@@ -1,13 +1,6 @@
 "use client";
 
 import { InfoCircledIcon } from "@radix-ui/react-icons";
-import {
-  PublicKey,
-  Transaction,
-  TransactionInstruction,
-  SystemProgram,
-  Keypair,
-} from "@solana/web3.js";
 import { Buffer } from "buffer";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -17,282 +10,94 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
-import { connection, PROGRAM_ID } from "@/lib/solana/connection";
+import { connection } from "@/lib/solana";
 import { useWalletStore } from "@/store/walletStore";
-import { getMultisigPDA } from "@/utils/credentialUtils";
+import { compressPublicKey } from "@/utils/bufferUtils";
+import { getMultisigPDA, getGuardianPDA } from "@/utils/credentialUtils";
+import { hashRecoveryPhrase } from "@/utils/guardianUtils";
 import { createWebAuthnCredential } from "@/utils/webauthnUtils";
-
-// Hàm chuyển đổi Buffer sang Uint8Array
-function bufferToUint8Array(buffer: Buffer): Uint8Array {
-  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-}
-
-// Hàm concat cho Uint8Array
-function concatUint8Arrays(...arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const arr of arrays) {
-    result.set(arr, offset);
-    offset += arr.length;
-  }
-  return result;
-}
-
-// Hàm chuyển đổi từ BigInt (u64) sang bytes theo thứ tự little-endian
-const bigIntToLeBytes = (
-  value: bigint,
-  bytesLength: number = 8,
-): Uint8Array => {
-  const result = new Uint8Array(bytesLength);
-  for (let i = 0; i < bytesLength; i++) {
-    result[i] = Number((value >> BigInt(8 * i)) & BigInt(0xff));
-  }
-  return result;
-};
-
-// Hàm nén khóa công khai từ dạng uncompressed (65 bytes) sang compressed (33 bytes)
-const compressPublicKey = (uncompressedKey: Buffer): Buffer => {
-  if (uncompressedKey[0] !== 0x04 || uncompressedKey.length !== 65) {
-    console.warn(
-      "Khóa không đúng định dạng không nén ECDSA, tạo khóa ngẫu nhiên",
-    );
-    const randomKey = Buffer.alloc(33);
-    randomKey[0] = 0x02;
-    const randomBytes = new Uint8Array(32);
-    crypto.getRandomValues(randomBytes);
-    for (let i = 0; i < 32; i++) {
-      randomKey[i + 1] = randomBytes[i];
-    }
-    return randomKey;
-  }
-
-  const x = new Uint8Array(uncompressedKey.slice(1, 33));
-  const y = new Uint8Array(uncompressedKey.slice(33, 65));
-  const prefix = (y[31] & 1) === 0 ? 0x02 : 0x03;
-
-  const compressedKey = Buffer.alloc(33);
-  compressedKey[0] = prefix;
-  for (let i = 0; i < 32; i++) {
-    compressedKey[i + 1] = x[i];
-  }
-
-  return compressedKey;
-};
-
-// Hàm hash recovery phrase
-const hashRecoveryPhrase = async (phrase: string): Promise<Uint8Array> => {
-  const phraseBytes = new TextEncoder().encode(phrase);
-  const inputBytes = new Uint8Array(32);
-  inputBytes.set(phraseBytes.slice(0, Math.min(phraseBytes.length, 32)));
-  const hashBuffer = await crypto.subtle.digest("SHA-256", inputBytes);
-  return new Uint8Array(hashBuffer);
-};
-
-// Thêm hàm chuyển đổi secret key
-const convertSecretKeyStringToUint8Array = (
-  secretKeyString: string | undefined,
-): Uint8Array => {
-  if (!secretKeyString) {
-    throw new Error(
-      "Fee payer secret key không được định nghĩa trong biến môi trường",
-    );
-  }
-
-  const numbers = secretKeyString.split(",").map((s) => parseInt(s.trim(), 10));
-
-  if (numbers.length !== 64 && numbers.length !== 65) {
-    throw new Error(
-      `Secret key phải có 64 hoặc 65 bytes, nhưng có ${numbers.length} bytes`,
-    );
-  }
-
-  const bytes = numbers.length === 65 ? numbers.slice(0, 64) : numbers;
-  return new Uint8Array(bytes);
-};
 
 export default function CreateWallet() {
   const router = useRouter();
-  const {
-    setMultisigAddress,
-    setGuardianPDA,
-    fetchPdaBalance,
-    setIsLoggedIn,
-    setWalletKeypair,
-    fetchGuardians,
-  } = useWalletStore();
-  const [currentStep, setCurrentStep] = useState("details");
   const [walletName, setWalletName] = useState("");
-  const [walletDescription, setWalletDescription] = useState("");
+  const [recoveryPhrase, setRecoveryPhrase] = useState("");
   const [threshold] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [currentStep, setCurrentStep] = useState<
+    "details" | "members" | "review"
+  >("details");
+  const { setMultisigPDA, setWalletData } = useWalletStore();
 
   const handleCreateWallet = async () => {
     try {
       setIsLoading(true);
       setError("");
 
-      // 1. Tạo khóa WebAuthn
-      const result = await createWebAuthnCredential(
-        walletName || "Moon Wallet",
-      );
+      const result = await createWebAuthnCredential(walletName);
       const rawIdBase64 = Buffer.from(result.rawId).toString("base64");
 
-      // 2. Tính PDA cho ví
       const multisigPDA = getMultisigPDA(rawIdBase64);
-      setMultisigAddress(multisigPDA);
+      const guardianPDA = getGuardianPDA(multisigPDA, 1);
 
-      // 3. Tính PDA cho guardian
-      const guardianId = BigInt(1); // Owner có ID = 1
-      const guardianIdBytes = bigIntToLeBytes(guardianId);
+      const walletResponse = await fetch("/api/wallet/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threshold,
+          credentialId: rawIdBase64,
+          name: walletName,
+          multisigPDA: multisigPDA.toString(),
+        }),
+      });
 
-      const [guardianPDAAddress] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("guardian").subarray(0),
-          multisigPDA.toBuffer(),
-          guardianIdBytes,
-        ],
-        PROGRAM_ID,
-      );
-
-      setGuardianPDA(guardianPDAAddress);
-
-      // 4. Lấy fee payer từ biến môi trường
-      const feePayerSecretKey = process.env.NEXT_PUBLIC_FEE_PAYER_SECRET_KEY;
-      if (!feePayerSecretKey) {
+      if (!walletResponse.ok) {
+        const errorData = await walletResponse.json();
         throw new Error(
-          "Fee payer secret key not found in environment variables",
+          `Failed to create wallet: ${errorData.error || "Unknown error"}`,
         );
       }
 
-      const feePayerPrivateKey =
-        convertSecretKeyStringToUint8Array(feePayerSecretKey);
-      const feePayerKeypair = Keypair.fromSecretKey(feePayerPrivateKey);
+      const walletData = await walletResponse.json();
+      await connection.confirmTransaction(walletData.signature);
 
-      // 5. Tạo transaction
-      const transaction = new Transaction();
-      transaction.feePayer = feePayerKeypair.publicKey;
+      const recoveryHashIntermediate = await hashRecoveryPhrase(recoveryPhrase);
 
-      // 5.1 Khởi tạo Multisig
-      const initMultisigDiscriminator = new Uint8Array([
-        220, 130, 117, 21, 27, 227, 78, 213,
-      ]);
-      const thresholdBytes = new Uint8Array([threshold]);
-
-      const credentialIdString = rawIdBase64;
-      const credentialIdBuffer = Buffer.from(credentialIdString);
-
-      const credentialIdLenBuffer = Buffer.alloc(4);
-      credentialIdLenBuffer.writeUInt32LE(credentialIdBuffer.length, 0);
-      const credentialIdLenBytes = bufferToUint8Array(credentialIdLenBuffer);
-      const credentialIdDataBytes = bufferToUint8Array(credentialIdBuffer);
-
-      const initData = concatUint8Arrays(
-        initMultisigDiscriminator,
-        thresholdBytes,
-        credentialIdLenBytes,
-        credentialIdDataBytes,
-      );
-
-      transaction.add(
-        new TransactionInstruction({
-          keys: [
-            { pubkey: multisigPDA, isSigner: false, isWritable: true },
-            {
-              pubkey: feePayerKeypair.publicKey,
-              isSigner: true,
-              isWritable: true,
-            },
-            {
-              pubkey: SystemProgram.programId,
-              isSigner: false,
-              isWritable: false,
-            },
-          ],
-          programId: PROGRAM_ID,
-          data: Buffer.from(initData),
-        }),
-      );
-
-      // 5.2 Thêm guardian đầu tiên (owner)
-      const hashedRecoveryBytes = await hashRecoveryPhrase(
-        walletName || "Moon Wallet",
-      );
-      const addGuardianDiscriminator = new Uint8Array([
-        167, 189, 170, 27, 74, 240, 201, 241,
-      ]);
-      const guardianNameBuffer = Buffer.from(walletName || "Moon Wallet");
-      const guardianNameLenBuffer = Buffer.alloc(4);
-      guardianNameLenBuffer.writeUInt32LE(guardianNameBuffer.length, 0);
-      const isOwnerByte = new Uint8Array([1]);
       const uncompressedKeyBuffer = Buffer.from(result.publicKey, "hex");
       const compressedKeyBuffer = compressPublicKey(uncompressedKeyBuffer);
 
-      const addGuardianData = concatUint8Arrays(
-        addGuardianDiscriminator,
-        bufferToUint8Array(Buffer.from(guardianIdBytes)),
-        bufferToUint8Array(guardianNameLenBuffer),
-        bufferToUint8Array(guardianNameBuffer),
-        hashedRecoveryBytes,
-        isOwnerByte,
-        new Uint8Array([1]),
-        bufferToUint8Array(compressedKeyBuffer),
-      );
-
-      transaction.add(
-        new TransactionInstruction({
-          keys: [
-            { pubkey: multisigPDA, isSigner: false, isWritable: true },
-            { pubkey: guardianPDAAddress, isSigner: false, isWritable: true },
-            {
-              pubkey: feePayerKeypair.publicKey,
-              isSigner: false,
-              isWritable: false,
-            },
-            {
-              pubkey: feePayerKeypair.publicKey,
-              isSigner: true,
-              isWritable: true,
-            },
-            {
-              pubkey: SystemProgram.programId,
-              isSigner: false,
-              isWritable: false,
-            },
-          ],
-          programId: PROGRAM_ID,
-          data: Buffer.from(addGuardianData),
+      const guardianResponse = await fetch("/api/guardian/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guardianId: 1,
+          recoveryHashIntermediate: Array.from(recoveryHashIntermediate),
+          webauthnPubkey: Array.from(compressedKeyBuffer),
+          multisigPDA: multisigPDA.toString(),
+          guardianPDA: guardianPDA.toString(),
         }),
-      );
+      });
 
-      // 6. Gửi transaction
-      const latestBlockhash = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = latestBlockhash.blockhash;
-
-      const signature = await connection.sendTransaction(transaction, [
-        feePayerKeypair,
-      ]);
-
-      await connection.confirmTransaction(signature);
-
-      // Update store
-      setMultisigAddress(multisigPDA);
-      setGuardianPDA(guardianPDAAddress);
-      await fetchPdaBalance();
-      setIsLoggedIn(true);
-      setWalletKeypair(feePayerKeypair);
-      // Fetch guardians after wallet creation
-      try {
-        await fetchGuardians();
-      } catch (error) {
-        console.error("Error fetching guardians after wallet creation:", error);
+      if (!guardianResponse.ok) {
+        const errorData = await guardianResponse.json();
+        throw new Error(
+          `Failed to add guardian: ${errorData.error || "Unknown error"}`,
+        );
       }
 
-      // Redirect to dashboard
+      await guardianResponse.json();
+
+      setMultisigPDA(multisigPDA.toString());
+      setWalletData({
+        walletName,
+        threshold,
+        guardianCount: 1,
+        lastUpdated: Date.now(),
+      });
+
       router.push("/dashboard");
     } catch (error) {
-      console.error("Error creating wallet:", error);
+      setError(error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIsLoading(false);
     }
@@ -350,13 +155,13 @@ export default function CreateWallet() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium">
-                  Description
+                  Recovery Key
                 </label>
                 <Input
-                  placeholder="Description (optional)"
-                  value={walletDescription}
-                  onChange={(e) => setWalletDescription(e.target.value)}
-                  maxLength={64}
+                  placeholder="Enter recovery key"
+                  value={recoveryPhrase}
+                  onChange={(e) => setRecoveryPhrase(e.target.value)}
+                  maxLength={32}
                   className="h-11"
                 />
               </div>
@@ -470,9 +275,9 @@ export default function CreateWallet() {
 
             <div className="rounded-lg bg-gray-50 p-4 dark:bg-zinc-900">
               <h3 className="text-lg font-semibold">{walletName}</h3>
-              {walletDescription && (
+              {recoveryPhrase && (
                 <p className="mt-1 text-gray-600 dark:text-gray-400">
-                  {walletDescription}
+                  {recoveryPhrase}
                 </p>
               )}
             </div>

@@ -1,7 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { Buffer } from "buffer";
 
-import { PROGRAM_ID } from "../lib/solana/connection";
+import { PROGRAM_ID } from "../lib/solana/index";
 
 /**
  * Xử lý credential ID để tạo seed cho PDA
@@ -65,18 +65,4 @@ export const getGuardianPDA = (
   );
 
   return pda;
-};
-
-/**
- * Lấy tất cả guardian PDAs cho một multisig
- */
-export const getAllGuardianPDAs = (
-  multisigPDA: PublicKey,
-  numGuardians: number,
-): PublicKey[] => {
-  const guardianPDAs: PublicKey[] = [];
-  for (let i = 1; i <= numGuardians; i++) {
-    guardianPDAs.push(getGuardianPDA(multisigPDA, i));
-  }
-  return guardianPDAs;
 };

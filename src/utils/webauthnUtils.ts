@@ -1,15 +1,12 @@
-import { PublicKey } from "@solana/web3.js";
 import * as CBOR from "cbor-web";
 
 import { bufferToHex } from "./bufferUtils";
-import { processCredentialIdForPDA } from "./helpers";
 
 /**
  * Tạo WebAuthn credential mới
  */
 export const createWebAuthnCredential = async (
-  walletAddress: string,
-  walletName?: string,
+  walletName: string,
 ): Promise<{ credentialId: string; publicKey: string; rawId: Uint8Array }> => {
   try {
     if (!isWebAuthnSupported()) {
@@ -24,13 +21,6 @@ export const createWebAuthnCredential = async (
     const userId = new Uint8Array(16);
     crypto.getRandomValues(userId);
 
-    // Đảm bảo có tên ví (quan trọng cho hiển thị trên hộp thoại trình duyệt)
-    const walletDisplayName =
-      walletName ||
-      `Moon Wallet ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-
-    console.log(`Tạo credential với tên: "${walletDisplayName}"`);
-
     // Tạo options cho credential creation
     const options: PublicKeyCredentialCreationOptions = {
       challenge: challenge,
@@ -40,8 +30,8 @@ export const createWebAuthnCredential = async (
       },
       user: {
         id: userId,
-        name: walletDisplayName, // Sử dụng walletDisplayName cho cả name
-        displayName: walletDisplayName, // Và displayName
+        name: walletName, // Sử dụng walletDisplayName cho cả name
+        displayName: walletName, // Và displayName
       },
       pubKeyCredParams: [
         { type: "public-key", alg: -7 }, // ES256
@@ -85,13 +75,7 @@ export const createWebAuthnCredential = async (
     const publicKey = bufferToHex(publicKeyBytes);
 
     // Lưu thông tin credential vào indexedDB/localStorage để sử dụng sau này
-    saveCredentialInfo(
-      walletAddress,
-      credentialId,
-      publicKey,
-      userId,
-      walletDisplayName,
-    );
+    saveCredentialInfo(credentialId, publicKey, userId, walletName);
 
     return {
       credentialId,
@@ -637,7 +621,6 @@ export const getWebAuthnAssertion = async (
  * Lưu thông tin credential vào localStorage
  */
 function saveCredentialInfo(
-  walletAddress: string,
   credentialId: string,
   publicKey: string,
   userId: Uint8Array,
@@ -646,7 +629,6 @@ function saveCredentialInfo(
   try {
     // Chuẩn bị thông tin credential để lưu
     const credentialInfo = {
-      walletAddress,
       credentialId,
       publicKey,
       userId: Array.from(userId), // Chuyển Uint8Array thành Array để có thể serialize
@@ -752,20 +734,4 @@ export const getWebAuthnAssertionForLogin = async (
       error: (error as Error).message || "Không thể xác thực",
     };
   }
-};
-
-/**
- * Lấy thông tin Multisig PDA dựa trên credential ID
- */
-export const calculateMultisigAddress = (
-  programId: PublicKey,
-  credentialId: string,
-): [PublicKey, number] => {
-  // Sử dụng hàm processCredentialIdForPDA từ helpers.ts để đảm bảo tính nhất quán
-  const seedBuffer = processCredentialIdForPDA(credentialId);
-
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("multisig"), seedBuffer],
-    programId,
-  );
 };

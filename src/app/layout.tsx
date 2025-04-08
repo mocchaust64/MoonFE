@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
+import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import Header from "@/components/layout/header";
 import { Toaster } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
 
 import "./globals.css";
 
@@ -20,6 +22,7 @@ export const metadata: Metadata = {
   title: "Moon Wallet - Your Secure Crypto Wallet",
   description:
     "A secure and user-friendly cryptocurrency wallet for managing your digital assets",
+  viewport: "width=device-width, initial-scale=1, maximum-scale=1",
 };
 
 export default function RootLayout({
@@ -30,13 +33,20 @@ export default function RootLayout({
   return (
     <html lang="en" className="bg-background h-full">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-screen font-sans antialiased`}
+        className={cn(
+          "min-h-screen font-sans antialiased",
+          geistSans.variable,
+          geistMono.variable,
+        )}
+        suppressHydrationWarning
       >
-        <div className="flex min-h-screen flex-col">
-          <Header />
-          <main className="relative flex-1">{children}</main>
-        </div>
-        <Toaster />
+        <ProtectedRoute>
+          <div className="flex min-h-screen flex-col">
+            <Header />
+            <main className="relative flex-1">{children}</main>
+          </div>
+          <Toaster />
+        </ProtectedRoute>
       </body>
     </html>
   );

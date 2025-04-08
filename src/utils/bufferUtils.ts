@@ -12,20 +12,16 @@ export const bufferToHex = (buffer: ArrayBuffer | Uint8Array): string => {
     .join("");
 };
 
-// Hàm chuyển đổi chuỗi hex thành ArrayBuffer
-export const hexToBuffer = (hex: string): ArrayBuffer => {
-  const bytes = new Uint8Array(
-    hex.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) || [],
-  );
-  return bytes.buffer;
-};
-
-// Hàm hash mật khẩu
-export const hashPassword = async (password: string): Promise<Uint8Array> => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return new Uint8Array(hashBuffer);
+// Hàm chuyển đổi từ BigInt (u64) sang bytes theo thứ tự little-endian
+export const bigIntToLeBytes = (
+  value: bigint,
+  bytesLength: number = 8,
+): Uint8Array => {
+  const result = new Uint8Array(bytesLength);
+  for (let i = 0; i < bytesLength; i++) {
+    result[i] = Number((value >> BigInt(8 * i)) & BigInt(0xff));
+  }
+  return result;
 };
 
 // Hàm nén khóa công khai từ dạng uncompressed (65 bytes) sang compressed (33 bytes)

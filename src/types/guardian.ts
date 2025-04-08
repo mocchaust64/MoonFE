@@ -1,57 +1,50 @@
-import { PublicKey } from "@solana/web3.js";
+/**
+ * Guardian types for Firebase and components
+ */
+import { Timestamp } from "firebase/firestore";
 
-export interface GuardianState {
-  guardians: Guardian[];
-  isLoading: boolean;
-  error: string | null;
+// Status type for both invitations and guardians
+export type GuardianStatus = "pending" | "ready" | "completed";
+
+// Basic invitation structure
+export interface InviteData {
+  inviteCode: string; // Unique invitation code
+  multisigPDA: string; // Multisig wallet address
+  guardianId: number; // Guardian ID (1-8)
+  status: GuardianStatus; // Current status
+  createdAt: Date | Timestamp;
+  walletName: string; // Name of the wallet
+}
+
+// Guardian data structure
+export interface GuardianData {
+  inviteCode: string; // Links to invitation
+  guardianId: number; // Guardian ID (1-8)
+  multisigPDA: string; // Multisig wallet address
+  hashedRecoveryBytes: number[]; // Hashed recovery phrase
+  webauthnCredentialId: string; // WebAuthn credential ID
+  webauthnPublicKey: number[]; // Compressed public key (33 bytes)
+  status: GuardianStatus; // Current status
+  createdAt: Date | Timestamp;
+  completedAt?: Date | Timestamp;
+  txSignature?: string; // Transaction signature after completion
+}
+
+// WebAuthn credential mapping
+export interface WebAuthnMapping {
+  credentialId: string; // WebAuthn credential ID
+  walletAddress: string; // Multisig wallet address
+  publicKey: number[]; // Compressed public key (33 bytes)
+}
+
+// Component Props Types
+export interface GuardianCardProps {
+  guardian: GuardianData;
+  onRemove?: (guardian: GuardianData) => void;
 }
 
 export interface Guardian {
-  id: bigint;
-  name: string;
-  publicKey: PublicKey;
-  isOwner: boolean;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface AddGuardianParams {
-  walletAddress: PublicKey;
-  guardianName: string;
-  guardianPublicKey: PublicKey;
-  isOwner: boolean;
-  recoveryPhrase: string;
-}
-
-export interface RemoveGuardianParams {
-  walletAddress: PublicKey;
-  guardianId: bigint;
-  guardianPublicKey: PublicKey;
-}
-
-export interface UpdateGuardianParams {
-  walletAddress: PublicKey;
-  guardianId: bigint;
-  name?: string;
-  isActive?: boolean;
-}
-
-export interface GuardianError extends Error {
-  code: GuardianErrorCode;
-  details?: unknown;
-}
-
-export enum GuardianErrorCode {
-  GUARDIAN_NOT_FOUND = "GUARDIAN_NOT_FOUND",
-  GUARDIAN_ALREADY_EXISTS = "GUARDIAN_ALREADY_EXISTS",
-  INVALID_GUARDIAN_PUBLIC_KEY = "INVALID_GUARDIAN_PUBLIC_KEY",
-  CANNOT_REMOVE_OWNER = "CANNOT_REMOVE_OWNER",
-  INSUFFICIENT_SIGNATURES = "INSUFFICIENT_SIGNATURES",
-  INVALID_RECOVERY_PHRASE = "INVALID_RECOVERY_PHRASE",
-}
-
-export interface GuardianValidationResult {
-  isValid: boolean;
-  errors: GuardianError[];
+  id: number;
+  publicKey: string;
+  isConfirmed: boolean;
 }
