@@ -11,7 +11,7 @@ import { createFeePayerKeypair } from "./keypairs";
 
 // Constants
 const RPC_ENDPOINT =
-  process.env.NEXT_PUBLIC_RPC_ENDPOINT || "https://api.devnet.solana.com";
+  process.env.NEXT_PUBLIC_RPC_ENDPOINT || "http://localhost:8899";
 export const PROGRAM_ID = new PublicKey(IDL.address);
 
 // Connection Configuration
@@ -19,6 +19,8 @@ const connectionOptions = {
   commitment: "confirmed" as Commitment,
   confirmTransactionInitialTimeout: 60000,
   disableRetryOnRateLimit: false,
+  wsEndpoint: process.env.NEXT_PUBLIC_WS_ENDPOINT || "ws://localhost:8900",
+  useWebSocket: false,
 };
 
 // Solana Connection

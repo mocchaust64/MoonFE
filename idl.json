@@ -1,5 +1,5 @@
 {
-  "address": "BWzgXaQGxFk1ojzJ1Y2c91QTw7uF9zK9AJcGkdJA3VZt",
+  "address": "FuX2HEjkziFVSgWL9rTkpVfGbsmuADLXyoorAHheswWX",
   "metadata": {
     "name": "moon_wallet_program",
     "version": "0.1.0",
@@ -18,9 +18,6 @@
         {
           "name": "guardian",
           "writable": true
-        },
-        {
-          "name": "guardian_pubkey"
         },
         {
           "name": "payer",
@@ -94,12 +91,10 @@
         },
         {
           "name": "old_guardian",
-          "docs": ["Guardian cũ"],
           "writable": true
         },
         {
           "name": "new_guardian",
-          "docs": ["Guardian mới"],
           "writable": true
         },
         {
@@ -142,7 +137,10 @@
           "writable": true
         },
         {
-          "name": "payer",
+          "name": "owner_guardian"
+        },
+        {
+          "name": "owner",
           "writable": true,
           "signer": true
         },
@@ -174,7 +172,11 @@
           "writable": true
         },
         {
-          "name": "payer",
+          "name": "owner_guardian",
+          "docs": ["Tài khoản guardian của người gọi, phải là owner"]
+        },
+        {
+          "name": "owner",
           "writable": true,
           "signer": true
         }
@@ -204,7 +206,9 @@
         },
         {
           "name": "guardian",
-          "docs": ["Guardian thực hiện giao dịch"]
+          "docs": [
+            "Tìm guardian owner có webauthn_pubkey mà chúng ta cần xác thực"
+          ]
         },
         {
           "name": "clock"
@@ -378,6 +382,16 @@
       "code": 6022,
       "name": "InactiveGuardian",
       "msg": "Guardian đang không hoạt động"
+    },
+    {
+      "code": 6023,
+      "name": "ArithmeticOverflow",
+      "msg": "Lỗi tràn số trong phép tính"
+    },
+    {
+      "code": 6024,
+      "name": "InsufficientFunds",
+      "msg": "Không đủ SOL trong tài khoản"
     }
   ],
   "types": [
@@ -419,10 +433,6 @@
           {
             "name": "guardian_id",
             "type": "u64"
-          },
-          {
-            "name": "is_active",
-            "type": "bool"
           },
           {
             "name": "recovery_hash",

@@ -5,7 +5,6 @@ import { Buffer } from "buffer";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +15,7 @@ import { compressPublicKey } from "@/utils/bufferUtils";
 import { getMultisigPDA, getGuardianPDA } from "@/utils/credentialUtils";
 import { hashRecoveryPhrase } from "@/utils/guardianUtils";
 import { createWebAuthnCredential } from "@/utils/webauthnUtils";
+import { saveWebAuthnCredentialMapping } from "@/lib/firebase/webAuthnService";
 
 export default function CreateWallet() {
   const router = useRouter();
@@ -86,6 +86,29 @@ export default function CreateWallet() {
       }
 
       await guardianResponse.json();
+      
+      const webauthnMapping = {
+              credentialId: rawIdBase64,
+              walletAddress: multisigPDA.toString(),
+              guardianPublicKey: Array.from(
+                new Uint8Array(compressedKeyBuffer)
+              ),
+              guardianId: 1
+            };
+
+            localStorage.setItem('current_credential_id', rawIdBase64);
+
+            localStorage.setItem(
+              "webauthn_credential_" + rawIdBase64,
+              JSON.stringify(webauthnMapping)
+            );
+
+      await saveWebAuthnCredentialMapping(
+        rawIdBase64,             // credential ID
+        multisigPDA.toString(),  // địa chỉ ví
+        Array.from(new Uint8Array(compressedKeyBuffer)), // public key
+        1,                       // guardianId = 1 (owner) 
+      );
 
       setMultisigPDA(multisigPDA.toString());
       setWalletData({

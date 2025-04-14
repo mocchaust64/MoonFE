@@ -4,6 +4,9 @@ import {
   Transaction,
   Keypair,
   SystemProgram,
+  SYSVAR_CLOCK_PUBKEY,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+  Connection,
 } from "@solana/web3.js";
 
 // Types
@@ -19,9 +22,14 @@ export interface AddGuardianParams {
   webauthnPubkey?: Uint8Array;
 }
 
-/**
- * Tạo transaction khởi tạo multisig wallet
- */
+export interface TransferParams {
+  destination: PublicKey;
+  amount: number;
+  nonce: number;
+  timestamp: number;
+  message: Uint8Array;
+}
+
 export const createInitializeMultisigTx = async (
   program: Program,
   params: InitializeMultisigParams,
@@ -43,9 +51,7 @@ export const createInitializeMultisigTx = async (
   }
 };
 
-/**
- * Tạo transaction thêm guardian
- */
+
 export const createAddGuardianTx = async (
   program: Program,
   params: AddGuardianParams,
@@ -75,56 +81,74 @@ export const createAddGuardianTx = async (
   }
 };
 
-/**
- * Tạo transaction xóa guardian
- */
-export const createRemoveGuardianTx = async (
+
+export const createTransferTx = async (
   program: Program,
-  guardianId: number,
-  ownerGuardianId: number,
+  params: TransferParams,
   multisigPDA: PublicKey,
   guardianPDA: PublicKey,
-  feePayer: PublicKey,
+  payer: PublicKey,
 ): Promise<Transaction> => {
   try {
+    // Validate input
+    if (params.amount <= 0) {
+      throw new Error(`Amount must be positive: ${params.amount}`);
+    }
+
+    // Create ActionParams struct
+    const actionParams = {
+      amount: new BN(params.amount),
+      destination: params.destination,
+      tokenMint: null // None variant for token_mint
+    };
+
+    // Use Anchor program methods
     return await program.methods
-      .removeGuardian(guardianId, ownerGuardianId)
+      .verifyAndExecute(
+        "transfer", // action
+        actionParams, // params
+        new BN(params.nonce), // nonce
+        new BN(params.timestamp), // timestamp
+        params.message // message
+      )
       .accounts({
         multisig: multisigPDA,
         guardian: guardianPDA,
-        payer: feePayer,
+        clock: SYSVAR_CLOCK_PUBKEY,
+        instructionSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        payer: payer,
+        destination: params.destination,
       })
       .transaction();
+
   } catch (error) {
-    console.error("Error creating remove guardian transaction:", error);
+    console.error("Error creating transfer transaction:", error);
     throw error;
   }
 };
 
 /**
- * Tạo transaction cập nhật trạng thái guardian
+ * Đọc nonce hiện tại của multisig wallet từ blockchain
  */
-export const createUpdateGuardianStatusTx = async (
-  program: Program,
-  guardianId: number,
-  ownerGuardianId: number,
-  isActive: boolean,
-  multisigPDA: PublicKey,
-  guardianPDA: PublicKey,
-  feePayer: PublicKey,
-): Promise<Transaction> => {
-  try {
-    return await program.methods
-      .updateGuardianStatus(guardianId, ownerGuardianId, isActive)
-      .accounts({
-        multisig: multisigPDA,
-        guardian: guardianPDA,
-        payer: feePayer,
-      })
-      .transaction();
-  } catch (error) {
-    console.error("Error creating update guardian status transaction:", error);
-    throw error;
+export const readMultisigNonce = async (
+  connection: Connection,
+  multisigPDA: PublicKey
+): Promise<number> => {
+  const accountInfo = await connection.getAccountInfo(multisigPDA);
+  if (!accountInfo) {
+    throw new Error(`Không tìm thấy tài khoản multisig: ${multisigPDA.toString()}`);
   }
+
+  // Offset của transaction_nonce
+  // 8 bytes (discriminator) + 1 byte (threshold) + 1 byte (guardian_count) + 8 bytes (recovery_nonce) + 1 byte (bump) = 19
+  const nonceOffset = 19;
+  
+  // Đọc 8 bytes của transaction_nonce
+  const nonceBytes = accountInfo.data.slice(nonceOffset, nonceOffset + 8);
+  const currentNonce = new BN(nonceBytes, 'le');
+  
+  return currentNonce.toNumber();
 };
+
+

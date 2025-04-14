@@ -4,7 +4,6 @@ import { PublicKey } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
 import { connection } from "@/lib/solana";
@@ -61,6 +60,9 @@ export default function LoginWallet() {
 
       // 6. Login thành công
       console.log("Login thành công với ví:", multisigPDA.toString());
+
+      localStorage.setItem('current_credential_id', rawIdBase64);
+      
       setMultisigPDA(multisigPDA.toString());
       setWalletData({
         lastUpdated: Date.now(),

@@ -127,6 +127,7 @@ export function GuardianSignup({
         webAuthnResult.credentialId,
         invitation.multisigPDA,
         Array.from(compressedKey),
+        invitation.guardianId
       );
 
       setIsRegistrationSuccess(true);

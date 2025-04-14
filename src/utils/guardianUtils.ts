@@ -7,7 +7,6 @@ import { bigIntToLeBytes } from "@/utils/bufferUtils";
 export interface Guardian {
   id: number;
   address: string;
-  isActive: boolean;
   recoveryHash: string;
   webauthnPubkey?: string;
   bump?: number;
@@ -124,32 +123,36 @@ function parseGuardianData(
     }
     console.log(`Guardian ID parsed: ${guardianId}`);
 
-    // 3. Đọc is_active (1 byte)
-    const isActive = guardianData[40] === 1;
-    console.log(`Is active: ${isActive}`);
-
-    // 4. Đọc recovery_hash (32 bytes)
-    const recoveryHash = guardianData.slice(41, 73);
+    // 3. Đọc recovery_hash (32 bytes)
+    const recoveryHash = guardianData.slice(40, 72);
     const recoveryHashHex = Buffer.from(recoveryHash).toString("hex");
     console.log(`Recovery hash: ${recoveryHashHex.slice(0, 10)}...`);
 
-    // 5. Đọc webauthn_pubkey (option<[u8; 33]>)
+    // 4. Đọc webauthn_pubkey (option<[u8; 33]>)
     let webauthnPubkey: string | undefined;
-    const hasWebauthn = guardianData[73] === 1;
+    const hasWebauthn = guardianData[72] === 1;
     if (hasWebauthn) {
-      const webauthnKey = guardianData.slice(74, 107);
+      const webauthnKey = guardianData.slice(73, 106);
       webauthnPubkey = Buffer.from(webauthnKey).toString("hex");
-      console.log(`WebAuthn pubkey: ${webauthnPubkey.slice(0, 10)}...`);
+      
+      // Thêm log ở đây
+      console.log('=== Guardian Account Debug ===');
+      console.log('Guardian ID:', id);
+      console.log('Guardian PDA:', guardianPDA.toString());
+      console.log('Has WebAuthn:', hasWebauthn);
+      console.log('Raw WebAuthn pubkey:', webauthnKey);
+      console.log('Formatted WebAuthn pubkey:', webauthnPubkey);
+      console.log('WebAuthn pubkey length:', webauthnKey.length);
+      console.log('===========================');
     }
 
-    // 6. Đọc bump (1 byte)
-    const bump = guardianData[hasWebauthn ? 107 : 74];
+    // 5. Đọc bump (1 byte)
+    const bump = guardianData[hasWebauthn ? 106 : 73];
     console.log(`Bump: ${bump}`);
 
     return {
       id,
       address: guardianPDA.toString(),
-      isActive,
       recoveryHash: recoveryHashHex,
       webauthnPubkey,
       bump,

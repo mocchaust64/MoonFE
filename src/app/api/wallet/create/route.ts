@@ -1,7 +1,6 @@
 // src/app/api/wallet/create/route.ts
 import { PublicKey } from "@solana/web3.js";
 import { NextResponse } from "next/server";
-
 import { connection, program } from "@/lib/solana";
 import { createFeePayerKeypair } from "@/lib/solana/keypairs";
 import { createInitializeMultisigTx } from "@/lib/solana/transactions";
@@ -11,6 +10,8 @@ const feePayer = createFeePayerKeypair();
 
 export async function POST(req: Request) {
   try {
+    console.log("Current RPC endpoint:", connection.rpcEndpoint);
+    console.log("feePayer:", feePayer.publicKey);
     const { threshold, credentialId, name, multisigPDA } = await req.json();
 
     if (!threshold || !credentialId || !name || !multisigPDA) {
@@ -27,6 +28,18 @@ export async function POST(req: Request) {
       multisigPubkey,
       feePayer,
     );
+
+    // Check fee payer balance before sending transaction
+    const balance = await connection.getBalance(feePayer.publicKey);
+    if (balance === 0) {
+      return NextResponse.json(
+        { 
+          error: "Fee payer account has no SOL. Please fund the account first.",
+          feePayerAddress: feePayer.publicKey.toString()
+        },
+        { status: 400 }
+      );
+    }
 
     const signature = await connection.sendTransaction(transaction, [feePayer]);
 

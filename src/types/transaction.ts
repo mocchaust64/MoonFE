@@ -1,5 +1,5 @@
 import { PublicKey, Transaction } from "@solana/web3.js";
-
+import { BN } from "@coral-xyz/anchor";
 import {
   TimeStamped,
   BaseError,
@@ -62,3 +62,26 @@ export interface TransactionValidationResult extends ValidationResult {
   transaction?: Transaction;
   metadata?: TransactionMetadata;
 }
+
+export interface ActionParams {
+  amount: BN | null;
+  destination: PublicKey | null;
+  tokenMint: PublicKey | null;
+}
+
+// Hàm tạo ActionParams
+export const createActionParams = (
+  amount?: BN | number,
+  destination?: PublicKey | string,
+  tokenMint?: PublicKey | string
+): ActionParams => {
+  return {
+    amount: amount ? (typeof amount === 'number' ? new BN(amount) : amount) : null,
+    destination: destination 
+      ? (typeof destination === 'string' ? new PublicKey(destination) : destination) 
+      : null,
+    tokenMint: tokenMint 
+      ? (typeof tokenMint === 'string' ? new PublicKey(tokenMint) : tokenMint) 
+      : null,
+  };
+};

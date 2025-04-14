@@ -9,10 +9,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 
 const Header = () => {
-  const { multisigPDA } = useWalletStore();
+  const { multisigPDA } = useWalletInfo();
 
   return (
     <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 h-14 border-b backdrop-blur">

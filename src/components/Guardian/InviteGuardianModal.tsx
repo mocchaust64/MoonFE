@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/modal";
 import { saveInvitation } from "@/lib/firebase/guardianService";
 import { connection } from "@/lib/solana";
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 import { getGuardianPDA } from "@/utils/credentialUtils";
 
 interface InviteGuardianModalProps {
@@ -28,7 +28,7 @@ export function InviteGuardianModal({
   open,
   onOpenChange,
 }: InviteGuardianModalProps) {
-  const { multisigPDA, walletName } = useWalletStore();
+  const { multisigPDA, walletName } = useWalletInfo();
   const [inviteLink, setInviteLink] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +73,7 @@ export function InviteGuardianModal({
 
       const newGuardianId = await findNextAvailableGuardianId();
       const newInviteCode = generateRandomCode(8);
-      const baseUrl = "http://localhost:3000";
+      const baseUrl = "https://d4e1-2a09-bac1-7ac0-50-00-17-30c.ngrok-free.app";
       const newInviteLink = `${baseUrl}/guardian/${newInviteCode}`;
 
       await saveInvitation({
