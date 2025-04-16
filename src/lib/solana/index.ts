@@ -17,10 +17,11 @@ export const PROGRAM_ID = new PublicKey(IDL.address);
 // Connection Configuration
 const connectionOptions = {
   commitment: "confirmed" as Commitment,
-  confirmTransactionInitialTimeout: 60000,
+  confirmTransactionInitialTimeout: 30000,
   disableRetryOnRateLimit: false,
   wsEndpoint: process.env.NEXT_PUBLIC_WS_ENDPOINT || "ws://localhost:8900",
   useWebSocket: false,
+  skipPreflight: true,
 };
 
 // Solana Connection

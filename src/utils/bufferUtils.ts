@@ -26,24 +26,28 @@ export const bigIntToLeBytes = (
 
 // Hàm nén khóa công khai từ dạng uncompressed (65 bytes) sang compressed (33 bytes)
 export const compressPublicKey = (uncompressedKey: Buffer): Buffer => {
+  // Kiểm tra nếu khóa đã ở định dạng nén rồi thì trả về nguyên trạng
+  if (uncompressedKey.length === 33 && (uncompressedKey[0] === 0x02 || uncompressedKey[0] === 0x03)) {
+    console.log("Khóa đã ở định dạng nén (33 bytes), sử dụng trực tiếp");
+    return uncompressedKey;
+  }
+  
   // Đảm bảo khóa bắt đầu với byte 0x04 (không nén)
   if (uncompressedKey[0] !== 0x04 || uncompressedKey.length !== 65) {
-    console.warn(
-      "Khóa không đúng định dạng không nén ECDSA, tạo khóa ngẫu nhiên",
-    );
+    console.warn("Khóa không đúng định dạng không nén ECDSA, tạo khóa ngẫu nhiên");
     // Tạo khóa random nếu không đúng định dạng
     const randomKey = Buffer.alloc(33);
     randomKey[0] = 0x02; // compressed, y is even
-
+    
     // Tạo dữ liệu ngẫu nhiên cho 32 bytes còn lại
     const randomBytes = new Uint8Array(32);
     crypto.getRandomValues(randomBytes);
-
+    
     // Sao chép vào buffer
     for (let i = 0; i < 32; i++) {
-      randomKey[i + 1] = randomBytes[i];
+      randomKey[i+1] = randomBytes[i];
     }
-
+    
     return randomKey;
   }
 

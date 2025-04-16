@@ -14,6 +14,7 @@ export interface InviteData {
   status: GuardianStatus; // Current status
   createdAt: Date | Timestamp;
   walletName: string; // Name of the wallet
+  threshold?: number; // Số lượng guardian cần thiết để recovery
 }
 
 // Guardian data structure
@@ -25,6 +26,7 @@ export interface GuardianData {
   webauthnCredentialId: string; // WebAuthn credential ID
   webauthnPublicKey: number[]; // Compressed public key (33 bytes)
   status: GuardianStatus; // Current status
+  guardianName?: string; // Guardian name
   createdAt: Date | Timestamp;
   completedAt?: Date | Timestamp;
   txSignature?: string; // Transaction signature after completion
@@ -35,6 +37,9 @@ export interface WebAuthnMapping {
   credentialId: string; // WebAuthn credential ID
   walletAddress: string; // Multisig wallet address
   publicKey: number[]; // Compressed public key (33 bytes)
+  guardianId: number; // Guardian ID (1-8)
+  guardianName?: string; // Tên của guardian
+  threshold?: number; // Ngưỡng ký của multisig
 }
 
 // Component Props Types

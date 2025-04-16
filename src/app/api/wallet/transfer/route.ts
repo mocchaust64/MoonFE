@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { program } from "@/lib/solana"; // Utility để lấy Anchor Program
 import { createTransferTx } from "@/lib/solana/transactions";
-import { createSecp256r1Instruction } from "@/lib/solana/secp356r1";
+import { createSecp256r1Instruction } from "@/lib/solana/secp256r1";
 import { createFeePayerKeypair } from "@/lib/solana/keypairs";
 
 

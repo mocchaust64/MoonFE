@@ -17,7 +17,7 @@ import { useWalletInfo } from "@/hooks/useWalletInfo";
 
 
 export function InfoContent() {
-  const { formatAddress } = useWalletInfo();
+  const { formatAddress, multisigPDA, guardians, threshold, guardianCount, walletName, balance } = useWalletInfo();
 
   const handleCopyAddress = (address: string) => {
     navigator.clipboard.writeText(address);

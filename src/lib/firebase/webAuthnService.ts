@@ -17,6 +17,10 @@ export interface WebAuthnCredentialMapping {
   walletAddress: string;
   guardianPublicKey: number[]; // Lưu khóa công khai dưới dạng mảng số
   guardianId: number; // ID của guardian
+  guardianName?: string; // Tên của guardian
+  threshold?: number; // Ngưỡng ký của ví multisig
+  createdAt: string; // Thời gian tạo
+  lastUsed?: string; // Thời gian sử dụng cuối cùng
 }
 
 export const normalizeCredentialId = (credentialId: string): string => {
@@ -40,6 +44,9 @@ export const normalizeCredentialId = (credentialId: string): string => {
  * @param credentialId ID của credential WebAuthn
  * @param walletAddress Địa chỉ ví multisig
  * @param guardianPublicKey Khóa công khai WebAuthn của guardian dưới dạng mảng số
+ * @param guardianId ID của guardian
+ * @param guardianName Tên của guardian (nếu có)
+ * @param threshold Ngưỡng ký của ví đa chữ ký
  * @returns Trả về true nếu lưu thành công
  */
 export const saveWebAuthnCredentialMapping = async (
@@ -47,14 +54,16 @@ export const saveWebAuthnCredentialMapping = async (
   walletAddress: string,
   guardianPublicKey: number[],
   guardianId: number,
+  guardianName?: string,
+  threshold?: number,
 ): Promise<boolean> => {
   try {
     // Chuẩn hóa credential ID
     const normalizedId = normalizeCredentialId(credentialId);
     const base64Id = Buffer.from(normalizedId, 'hex').toString('base64');
 
-    // Tạo một document dưới collection webauthn_credentials
-    await setDoc(doc(db, "webauthn_credentials", normalizedId), {
+    // Tạo dữ liệu cơ bản
+    const credentialData: any = {
       credentialId: normalizedId,
       credentialIdBase64: base64Id,
       walletAddress,
@@ -62,7 +71,20 @@ export const saveWebAuthnCredentialMapping = async (
       guardianId,
       createdAt: new Date().toISOString(),
       lastUsed: new Date().toISOString()
-    });
+    };
+    
+    // Thêm guardianName nếu có
+    if (guardianName) {
+      credentialData.guardianName = guardianName;
+    }
+    
+    // Thêm threshold nếu có
+    if (threshold !== undefined) {
+      credentialData.threshold = threshold;
+    }
+
+    // Tạo một document dưới collection webauthn_credentials
+    await setDoc(doc(db, "webauthn_credentials", normalizedId), credentialData);
 
     console.log('Đã lưu ánh xạ WebAuthn credential thành công');
     return true;

@@ -73,7 +73,7 @@ export function InviteGuardianModal({
 
       const newGuardianId = await findNextAvailableGuardianId();
       const newInviteCode = generateRandomCode(8);
-      const baseUrl = "https://d4e1-2a09-bac1-7ac0-50-00-17-30c.ngrok-free.app";
+      const baseUrl = "https://b5e3-1-52-134-69.ngrok-free.app";
       const newInviteLink = `${baseUrl}/guardian/${newInviteCode}`;
 
       await saveInvitation({
@@ -82,6 +82,7 @@ export function InviteGuardianModal({
         guardianId: newGuardianId,
         status: "pending",
         walletName: walletName || "Unnamed Wallet",
+        threshold: 1,
       });
 
       setInviteLink(newInviteLink);

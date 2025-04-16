@@ -23,6 +23,10 @@ const config: NextConfig = {
       },
     ];
   },
+  
+  // Thêm cấu hình để giải quyết vấn đề 404 với static assets
+  reactStrictMode: true,
+  output: 'standalone',
 };
 
 export default config;

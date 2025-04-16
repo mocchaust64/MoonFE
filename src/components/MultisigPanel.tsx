@@ -20,7 +20,7 @@ import {
 } from "@/utils/webauthnUtils";
 import {
   createSecp256r1Instruction, normalizeSignatureToLowS
-} from "@/lib/solana/secp356r1";
+} from "@/lib/solana/secp256r1";
 import { createActionParams } from "@/types/transaction";
 import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
 import { getGuardianPDA } from "@/utils/credentialUtils";
@@ -349,6 +349,13 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
         const signatureBuffer = Buffer.from(signatureRaw);
 
         console.log("Signature (raw):", signatureBuffer.toString("hex"));
+        
+        // Thêm log chi tiết về WebAuthn assertion
+        console.log("[DEBUG] WebAuthn Raw Response:");
+        console.log("- clientDataJSON (raw):", new Uint8Array(assertion.clientDataJSON));
+        console.log("- clientDataJSON (text):", new TextDecoder().decode(assertion.clientDataJSON));
+        console.log("- authenticatorData (hex):", Buffer.from(assertion.authenticatorData).toString('hex'));
+        console.log("- signature (hex):", Buffer.from(assertion.signature).toString('hex'));
 
         // Chuẩn hóa signature về dạng Low-S
         const normalizedSignature = normalizeSignatureToLowS(
@@ -370,11 +377,11 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
           assertion
         );
 
-        console.log("Verification data length:", verificationData.length);
-        console.log(
-          "Verification data (hex):",
-          Buffer.from(verificationData).toString("hex")
-        );
+        console.log("[DEBUG] Verification Data:");
+        console.log("- verificationData (hex):", Buffer.from(verificationData).toString("hex"));
+        console.log("- verificationData (length):", verificationData.length);
+        console.log("- authDataBytes (length):", assertion.authenticatorData.length);
+        console.log("- clientDataHashBytes (length):", 32); // SHA-256 hash luôn là 32 bytes
 
         // 4. Tạo secp256r1 instruction - sử dụng verificationData thay vì message
         const secp256r1Instruction = createSecp256r1Instruction(

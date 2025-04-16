@@ -70,10 +70,11 @@ export function GuardianConfirm({
         },
         body: JSON.stringify({
           guardianId: guardianData.guardianId,
+          guardianName: guardian?.guardianName || `Guardian ${guardianData.guardianId}`,
           recoveryHashIntermediate: guardianData.hashedRecoveryBytes,
           webauthnPubkey: guardianData.webauthnPublicKey,
+          webauthnCredentialId: guardianData.webauthnCredentialId,
           multisigPDA: multisigPDA,
-          guardianPDA: guardianPDA.toString(),
         }),
       });
 

@@ -118,6 +118,7 @@ export function GuardianSignup({
         webauthnPublicKey: Array.from(compressedKey),
         status: "ready",
         createdAt: new Date(),
+        guardianName: walletName,
       };
 
       await saveGuardianData(guardianData);
@@ -127,7 +128,9 @@ export function GuardianSignup({
         webAuthnResult.credentialId,
         invitation.multisigPDA,
         Array.from(compressedKey),
-        invitation.guardianId
+        invitation.guardianId,
+        walletName,
+        invitation.threshold
       );
 
       setIsRegistrationSuccess(true);

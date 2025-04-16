@@ -4,11 +4,12 @@ import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { 
   PublicKey, 
 } from '@solana/web3.js';
-import { getWebAuthnAssertion } from "@/utils/webauthnUtils"; 
-import { formatLamportsToSOL, formatTimestamp, shortenAddress } from "@/utils/uiHelpers";
-import { createApproveProposalTx, createExecuteProposalTx } from "@/utils/transactionUtils";
-import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
-import { useWalletInfo } from "@/hooks/useWalletInfo"
+import { getWebAuthnAssertion } from "../utils/webauthnUtils"; 
+import { formatLamportsToSOL, formatTimestamp, shortenAddress } from "../utils/uiHelpers";
+import { createApproveProposalTx, createExecuteProposalTx } from "../utils/transactionUtils";
+import { getWalletByCredentialId } from "../lib/firebase/webAuthnService";
+import { getGuardianPDA } from "../utils/credentialUtils";
+import { useWalletInfo } from "../hooks/useWalletInfo"
 
 // Component hiển thị một người ký với trạng thái
 const SignerItem: React.FC<{
@@ -40,7 +41,7 @@ const ProposalDetail: React.FC = () => {
   const proposalId = params?.proposalId as string;
   const { connection } = useConnection();
   const { publicKey, sendTransaction } = useWallet();
-  const { multisigPDA, guardianPDA } = useWalletInfo();
+  const { multisigPDA } = useWalletInfo();
   
   const [loading, setLoading] = useState<boolean>(true);
   const [signingLoading, setSigningLoading] = useState<boolean>(false);
@@ -149,7 +150,7 @@ const ProposalDetail: React.FC = () => {
       
       // Yêu cầu người dùng xác thực trực tiếp với WebAuthn - không chỉ định credential ID
       // allowEmpty = true cho phép người dùng chọn từ danh sách các credential đã đăng ký
-      const assertion = await getWebAuthnAssertion(null, messageTemplate, true);
+      const assertion = await getWebAuthnAssertion('', messageTemplate, true);
       
       // Lấy credential ID từ assertion hoặc clientDataJSON
       const clientDataObj = JSON.parse(new TextDecoder().decode(assertion.clientDataJSON));
@@ -175,15 +176,25 @@ const ProposalDetail: React.FC = () => {
       const guardianId = guardianInfo.guardianId;
       console.log('Guardian ID từ Firebase:', guardianId);
       
+      // Tính guardianPDA dựa trên multisigPDA và guardianId
+      const multisigPublicKey = new PublicKey(multisigPDA);
+      const guardianPDA = getGuardianPDA(multisigPublicKey, guardianId);
+      
       // Lấy WebAuthn public key từ Firebase
       if (!guardianInfo.guardianPublicKey || guardianInfo.guardianPublicKey.length === 0) {
         throw new Error('Không tìm thấy WebAuthn public key trong Firebase');
       }
       
+      // Lưu WebAuthn public key vào localStorage để hàm getWebAuthnPublicKey có thể tìm thấy
+      const normalizedCredentialId = Buffer.from(credentialId, 'base64').toString('hex');
+      const credentialSpecificKey = `guardianPublicKey_${normalizedCredentialId}`;
+      localStorage.setItem(credentialSpecificKey, Buffer.from(guardianInfo.guardianPublicKey).toString('hex'));
+      console.log(`Đã lưu WebAuthn public key vào localStorage với key: ${credentialSpecificKey}`);
+      
       // Tạo transaction để ký đề xuất
       const tx = await createApproveProposalTx(
         new PublicKey(proposal.accountData.proposalPDA),
-        multisigPDA,
+        new PublicKey(multisigPDA),
         guardianPDA,
         guardianId,
         publicKey,
@@ -191,11 +202,15 @@ const ProposalDetail: React.FC = () => {
         assertion.authenticatorData,
         assertion.clientDataJSON,
         proposalIdValue,
-        timestamp
+        timestamp,
+        credentialId
       );
       
       // Gửi transaction
-      const signature = await sendTransaction(tx, connection);
+      const signature = await sendTransaction(tx, connection, {
+        skipPreflight: false,  // Thay đổi để bắt lỗi sớm
+        preflightCommitment: 'confirmed'
+      });
       console.log('Đã ký đề xuất, signature:', signature);
       
       // Cập nhật UI
@@ -302,8 +317,9 @@ const ProposalDetail: React.FC = () => {
       // Tạo transaction để thực thi đề xuất
       const tx = await createExecuteProposalTx(
         new PublicKey(proposal.accountData.proposalPDA),
-        multisigPDA,
-        publicKey
+        new PublicKey(multisigPDA),
+        publicKey,
+        proposal.destination ? new PublicKey(proposal.destination) : undefined
       );
       
       // Gửi transaction

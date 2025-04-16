@@ -55,6 +55,14 @@ export const createSecp256r1Instruction = (
   signature: Buffer,
   shouldFlipPublicKey: boolean = false
 ): TransactionInstruction => {
+  // Thêm log chi tiết dữ liệu đầu vào
+  console.log("[DEBUG] createSecp256r1Instruction INPUT:");
+  console.log("- message (hex):", message.toString('hex'));
+  console.log("- message (length):", message.length);
+  console.log("- publicKey (hex):", publicKey.toString('hex'));  
+  console.log("- signature (hex):", signature.toString('hex'));
+  console.log("- shouldFlipPublicKey:", shouldFlipPublicKey);
+
   console.log("Tạo secp256r1 instruction với:", {
     messageLength: message.length,
     pubkeyLength: publicKey.length,
@@ -109,6 +117,11 @@ export const createSecp256r1Instruction = (
     messageDataOffset,
     messageLength: message.length
   });
+
+  // Thêm log chi tiết dữ liệu instruction cuối cùng
+  console.log("[DEBUG] FINAL INSTRUCTION DATA:");
+  console.log("- instruction data (hex):", instructionData.toString('hex'));
+  console.log("- instruction length:", instructionData.length);
 
   return new TransactionInstruction({
     keys: [],

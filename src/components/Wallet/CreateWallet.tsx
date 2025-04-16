@@ -71,10 +71,11 @@ export default function CreateWallet() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           guardianId: 1,
+          guardianName: walletName || "Owner",
           recoveryHashIntermediate: Array.from(recoveryHashIntermediate),
           webauthnPubkey: Array.from(compressedKeyBuffer),
+          webauthnCredentialId: rawIdBase64,
           multisigPDA: multisigPDA.toString(),
-          guardianPDA: guardianPDA.toString(),
         }),
       });
 
@@ -107,7 +108,9 @@ export default function CreateWallet() {
         rawIdBase64,             // credential ID
         multisigPDA.toString(),  // địa chỉ ví
         Array.from(new Uint8Array(compressedKeyBuffer)), // public key
-        1,                       // guardianId = 1 (owner) 
+        1,                       // guardianId = 1 (owner)
+        walletName,              // Thêm walletName 
+        threshold                // Thêm threshold
       );
 
       setMultisigPDA(multisigPDA.toString());

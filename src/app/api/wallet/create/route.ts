@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { connection, program } from "@/lib/solana";
 import { createFeePayerKeypair } from "@/lib/solana/keypairs";
 import { createInitializeMultisigTx } from "@/lib/solana/transactions";
+import { saveWalletMetadata } from "@/lib/firebase/walletService";
 
 // Khởi tạo kết nối và fee payer
 const feePayer = createFeePayerKeypair();
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
     console.log("feePayer:", feePayer.publicKey);
     const { threshold, credentialId, name, multisigPDA } = await req.json();
 
-    if (!threshold || !credentialId || !name || !multisigPDA) {
+    if (!threshold || !credentialId || !multisigPDA) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
     const multisigPubkey = new PublicKey(multisigPDA);
     const transaction = await createInitializeMultisigTx(
       program,
-      { threshold, credentialId, name },
+      { threshold, credentialId },
       multisigPubkey,
       feePayer,
     );
@@ -42,6 +43,17 @@ export async function POST(req: Request) {
     }
 
     const signature = await connection.sendTransaction(transaction, [feePayer]);
+    
+    // Lưu tên ví vào Firebase
+    if (name) {
+      try {
+        await saveWalletMetadata(multisigPDA, { name });
+        console.log(`Wallet name "${name}" saved to Firebase for ${multisigPDA}`);
+      } catch (firebaseError) {
+        console.error("Error saving wallet name to Firebase:", firebaseError);
+        // Không fail transaction nếu lưu Firebase thất bại
+      }
+    }
 
     return NextResponse.json({
       success: true,

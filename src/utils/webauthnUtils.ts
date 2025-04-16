@@ -269,6 +269,7 @@ export const getWebAuthnAssertion = async (
   signature: Uint8Array;
   authenticatorData: Uint8Array;
   clientDataJSON: Uint8Array;
+  pubKey?: Uint8Array;
 }> => {
   if (!isWebAuthnSupported()) {
     throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
@@ -308,7 +309,7 @@ export const getWebAuthnAssertion = async (
     try {
       const credentialsListStr = localStorage.getItem("webauthnCredentials");
       if (credentialsListStr) {
-        const credentialsList = JSON.parse(credentialsListStr);
+        const credentialsList = JSON.parse(credentialsListStr) as StoredCredential[];
         if (Array.isArray(credentialsList) && credentialsList.length > 0) {
           options.allowCredentials = credentialsList.map((cred) => ({
             id: Buffer.from(cred.credentialId, "hex"),
@@ -326,11 +327,29 @@ export const getWebAuthnAssertion = async (
     })) as PublicKeyCredential;
 
     const response = assertion.response as AuthenticatorAssertionResponse;
+    
+    // Tìm public key từ localStorage
+    let pubKey: Uint8Array | undefined;
+    try {
+      const credentialsListStr = localStorage.getItem("webauthnCredentials");
+      if (credentialsListStr) {
+        const credentialsList = JSON.parse(credentialsListStr) as StoredCredential[];
+        const matchingCred = credentialsList.find(
+          (cred: StoredCredential) => cred.credentialId === bufferToHex(assertion.rawId)
+        );
+        if (matchingCred && matchingCred.publicKey) {
+          pubKey = Buffer.from(matchingCred.publicKey, "hex");
+        }
+      }
+    } catch (error) {
+      console.warn("Không thể lấy public key từ localStorage:", error);
+    }
 
     return {
       signature: new Uint8Array(response.signature),
       authenticatorData: new Uint8Array(response.authenticatorData),
       clientDataJSON: new Uint8Array(response.clientDataJSON),
+      pubKey
     };
   } catch (error) {
     throw error;
@@ -348,7 +367,7 @@ function saveCredentialInfo(
 ): void {
   try {
     // Chuẩn bị thông tin credential để lưu
-    const credentialInfo = {
+    const credentialInfo: StoredCredential = {
       credentialId,
       publicKey,
       userId: Array.from(userId), // Chuyển Uint8Array thành Array để có thể serialize
@@ -465,3 +484,12 @@ export const createWebAuthnVerificationData = async (
   
   return verificationData;
 };
+
+// Thêm kiểu cho credential được lưu trong localStorage
+interface StoredCredential {
+  credentialId: string;
+  publicKey: string;
+  userId: number[];
+  displayName: string;
+  createdAt: string;
+}

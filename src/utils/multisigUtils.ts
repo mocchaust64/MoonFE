@@ -5,10 +5,11 @@ import {
   TransactionInstruction,
   LAMPORTS_PER_SOL,
   SYSVAR_CLOCK_PUBKEY,
+  SystemProgram,
 } from "@solana/web3.js";
 import { getMultisigPDA } from "@/utils/credentialUtils";
 import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
-import { PROGRAM_ID, connection, program } from "@/lib/solana/index";
+import { PROGRAM_ID, connection, program, MoonWalletProgram } from "@/lib/solana/index";
 import { BN } from "@coral-xyz/anchor";
 
 /**
@@ -27,7 +28,7 @@ export const findProgramAddress = async (
  */
 export const findMultisigWallet = async (
   credentialId: string,
-  program: program | null,
+  program: MoonWalletProgram | null,
   callbacks: {
     onSuccess?: (data: any) => void;
     onError?: (error: any) => void;

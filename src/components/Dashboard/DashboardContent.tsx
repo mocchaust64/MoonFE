@@ -154,12 +154,37 @@ export function DashboardContent() {
           </TabsList>
           <TabsContent value="assets">
             <Card className="p-4">
-              <div className="space-y-2">
-                <div className="text-muted-foreground text-sm">
-                  Vault balance
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-muted-foreground text-sm">
+                    Địa chỉ ví
+                  </div>
+                  <div className="text-sm font-medium flex items-center">
+                    {multisigPDA ? (
+                      <>
+                        <span className="mr-2">{multisigPDA.toString().slice(0, 6)}...{multisigPDA.toString().slice(-6)}</span>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(multisigPDA.toString());
+                            toast.success("Đã sao chép địa chỉ ví");
+                          }}
+                          className="text-xs px-2 py-0.5 bg-muted rounded hover:bg-muted/80"
+                        >
+                          Sao chép
+                        </button>
+                      </>
+                    ) : (
+                      'N/A'
+                    )}
+                  </div>
                 </div>
-                <div className="text-muted-foreground text-sm">
-                  {balance.toFixed(4)} SOL
+                <div className="flex items-center justify-between">
+                  <div className="text-muted-foreground text-sm">
+                    Số dư ví
+                  </div>
+                  <div className="text-xl font-medium">
+                    {balance.toFixed(4)} SOL
+                  </div>
                 </div>
               </div>
             </Card>

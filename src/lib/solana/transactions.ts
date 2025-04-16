@@ -7,18 +7,21 @@ import {
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_INSTRUCTIONS_PUBKEY,
   Connection,
+  TransactionInstruction,
 } from "@solana/web3.js";
+import { PROGRAM_ID } from "./index";
 
 // Types
 export interface InitializeMultisigParams {
   threshold: number;
   credentialId: string;
-  name: string;
 }
 
 export interface AddGuardianParams {
   guardianId: number;
+  guardianName: string;
   recoveryHashIntermediate: Uint8Array;
+  isOwner: boolean;
   webauthnPubkey?: Uint8Array;
 }
 
@@ -38,7 +41,7 @@ export const createInitializeMultisigTx = async (
 ): Promise<Transaction> => {
   try {
     return await program.methods
-      .initializeMultisig(params.threshold, params.credentialId, params.name)
+      .initializeMultisig(params.threshold, params.credentialId)
       .accounts({
         multisig: multisigPDA,
         feePayer: feePayer.publicKey,
@@ -64,13 +67,15 @@ export const createAddGuardianTx = async (
     return await program.methods
       .addGuardian(
         new BN(params.guardianId),
+        params.guardianName,
         params.recoveryHashIntermediate,
+        params.isOwner,
         params.webauthnPubkey,
       )
       .accounts({
         multisig: multisigPubkey,
         guardian: guardianPDA,
-        guardianPubkey: guardianPublicKey,
+        guardian_pubkey: guardianPublicKey,
         payer: feePayer,
         systemProgram: SystemProgram.programId,
       })
@@ -81,6 +86,106 @@ export const createAddGuardianTx = async (
   }
 };
 
+/**
+ * Các hàm tiện ích cho phương pháp thủ công
+ */
+// Nối nhiều Uint8Array thành một
+function concatUint8Arrays(...arrays: Uint8Array[]): Uint8Array {
+  const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    result.set(arr, offset);
+    offset += arr.length;
+  }
+  return result;
+}
+
+// Chuyển đổi Buffer thành Uint8Array
+function bufferToUint8Array(buffer: Buffer): Uint8Array {
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.length);
+}
+
+// Chuyển BigInt thành mảng little-endian bytes
+function bigIntToLeBytes(value: bigint, bytesLength: number = 8): Uint8Array {
+  const result = new Uint8Array(bytesLength);
+  for (let i = 0; i < bytesLength; i++) {
+    result[i] = Number((value >> BigInt(8 * i)) & BigInt(0xff));
+  }
+  return result;
+}
+
+/**
+ * Tạo transaction thêm guardian theo phương pháp thủ công
+ * Cách này phù hợp với cấu trúc dữ liệu instruction của Solana program
+ */
+export const createAddGuardianTxManual = (
+  multisigPDA: PublicKey,
+  guardianPDA: PublicKey,
+  feePayer: PublicKey,
+  guardianName: string,
+  guardianId: number,
+  recoveryHashIntermediate: Uint8Array,
+  webauthnPubkey?: Uint8Array
+): Transaction => {
+  try {
+    // Discriminator cho add_guardian
+    const addGuardianDiscriminator = new Uint8Array([167, 189, 170, 27, 74, 240, 201, 241]);
+    
+    // Chuyển guardian ID thành bytes
+    const guardianIdBigInt = BigInt(guardianId);
+    const guardianIdBytes = bigIntToLeBytes(guardianIdBigInt);
+    
+    // Chuẩn bị tên guardian
+    const guardianNameBuffer = Buffer.from(guardianName);
+    const guardianNameLenBuffer = Buffer.alloc(4);
+    guardianNameLenBuffer.writeUInt32LE(guardianNameBuffer.length, 0);
+    
+    // Đặt is_owner = true vì đây là owner
+    const isOwnerByte = new Uint8Array([1]); // true = 1
+    
+    // Tạo dữ liệu instruction
+    const buffers = [
+      addGuardianDiscriminator,
+      bufferToUint8Array(Buffer.from(guardianIdBytes)),
+      bufferToUint8Array(guardianNameLenBuffer),
+      bufferToUint8Array(guardianNameBuffer),
+      recoveryHashIntermediate,
+      isOwnerByte,
+    ];
+    
+    // Thêm webauthnPubkey nếu có
+    if (webauthnPubkey) {
+      buffers.push(new Uint8Array([1])); // Some variant
+      buffers.push(webauthnPubkey);
+    } else {
+      buffers.push(new Uint8Array([0])); // None variant
+    }
+    
+    const data = concatUint8Arrays(...buffers);
+    
+    // Tạo transaction add guardian
+    const tx = new Transaction();
+    tx.add(
+      new TransactionInstruction({
+        keys: [
+          { pubkey: multisigPDA, isSigner: false, isWritable: true },
+          { pubkey: guardianPDA, isSigner: false, isWritable: true },
+          { pubkey: feePayer, isSigner: false, isWritable: false },
+          { pubkey: feePayer, isSigner: true, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
+        ],
+        programId: PROGRAM_ID,
+        data: Buffer.from(data)
+      })
+    );
+    
+    return tx;
+  } catch (error) {
+    console.error("Lỗi khi tạo transaction add guardian:", error);
+    throw error;
+  }
+};
 
 export const createTransferTx = async (
   program: Program,
