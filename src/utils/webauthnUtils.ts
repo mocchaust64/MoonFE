@@ -215,7 +215,7 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
     offset++; // Skip 0x02
     
     const rLen = signature[offset++];
-    let r = signature.slice(offset, offset + rLen);
+    const r = signature.slice(offset, offset + rLen);
     offset += rLen;
     
     // Đọc s
@@ -225,7 +225,7 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
     offset++; // Skip 0x02
     
     const sLen = signature[offset++];
-    let s = signature.slice(offset, offset + sLen);
+    const s = signature.slice(offset, offset + sLen);
    
     // Chuẩn bị r và s cho định dạng raw (mỗi phần 32 bytes)
     const rPadded = new Uint8Array(32);

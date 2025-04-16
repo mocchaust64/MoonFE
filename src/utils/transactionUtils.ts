@@ -343,7 +343,7 @@ export const derToRaw = (derSignature: Uint8Array): Uint8Array => {
   }
   
   const rLength = derSignature[3];
-  let rOffset = 4;
+  const rOffset = 4;
   let rValue = derSignature.slice(rOffset, rOffset + rLength);
   
   // Loại bỏ padding 0 nếu có

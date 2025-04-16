@@ -103,6 +103,13 @@ const createTransactionItem = (proposal: Proposal): TransactionItem => ({
   proposal
 });
 
+// Thêm khai báo cho window.loggedTransactions
+declare global {
+  interface Window {
+    loggedTransactions: Set<string>;
+  }
+}
+
 export function TransactionsContent() {
   const { threshold, guardianCount, multisigPDA } = useWalletInfo();
   const { guardians } = useWalletStore();
@@ -637,6 +644,28 @@ export function TransactionsContent() {
     }
   };
 
+  // Log debugging info
+  const logDebuggingInfo = (transaction: TransactionItem) => {
+    // Chỉ log một lần mỗi transaction để tránh spam console
+    if (!window.loggedTransactions) window.loggedTransactions = new Set<string>();
+    
+    if (!window.loggedTransactions.has(transaction.id)) {
+      console.log(`DEBUG ${transaction.id}:`, {
+        guardianPDA,
+        guardianId,
+        localStorageGuardianPDA: localStorage.getItem('guardianPDA'),
+        hasProposal: !!transaction.proposal,
+        statusRaw: transaction.proposal?.status,
+        statusLower: transaction.proposal?.status?.toLowerCase(),
+        buttonShouldShow: transaction.proposal && !transaction.proposal.transactionSignature,
+        hasUserSignedResult: transaction.proposal ? hasCurrentUserSigned(transaction.proposal) : false,
+        signers: transaction.proposal?.signers || []
+      });
+      window.loggedTransactions.add(transaction.id);
+    }
+    return null;
+  };
+
   useEffect(() => {
     const savedCredentialId = localStorage.getItem('credentialId');
     const savedGuardianId = localStorage.getItem('guardianId');
@@ -652,23 +681,40 @@ export function TransactionsContent() {
       setGuardianId(primaryGuardian.id);
     }
     
-    // Load data when component mounts
+    // Load data once when component mounts
     loadPendingGuardians();
     loadProposalsFromFirebase();
+    setDataLastLoaded(Date.now());
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Xóa dependencies để chỉ chạy khi mount component, tránh vòng lặp vô hạn
+  }, []); // Chỉ chạy khi mount component
 
   // Sử dụng useRef để lưu giá trị multisigPDA trước đó
   const prevMultisigPDARef = useRef<string | null>(null);
+  const dataLoadingRef = useRef<boolean>(false);
 
   // Thêm useEffect mới để xử lý khi guardians hoặc multisigPDA thay đổi,
   // nhưng không gây ra refresh liên tục
   useEffect(() => {
-    // Chỉ log nếu multisigPDA thay đổi thực sự (so sánh với giá trị trước đó)
+    // Tránh việc load dữ liệu trùng lặp
+    if (dataLoadingRef.current) return;
+    
+    // Chỉ reload nếu multisigPDA thay đổi thực sự
     if (multisigPDA && (!prevMultisigPDARef.current || prevMultisigPDARef.current !== multisigPDA.toString())) {
       console.log("MultisigPDA changed:", multisigPDA.toString());
       prevMultisigPDARef.current = multisigPDA.toString();
+      
+      // Tránh load liên tục
+      const now = Date.now();
+      if (now - dataLastLoaded > 5000) {
+        dataLoadingRef.current = true;
+        loadPendingGuardians();
+        loadProposalsFromFirebase();
+        setDataLastLoaded(now);
+        setTimeout(() => {
+          dataLoadingRef.current = false;
+        }, 1000);
+      }
     }
     
     // Chỉ cập nhật guardian nếu chưa có guardianPDA được lưu
@@ -677,8 +723,8 @@ export function TransactionsContent() {
       setGuardianPDA(primaryGuardian.address);
       setGuardianId(primaryGuardian.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guardians, multisigPDA, guardianPDA]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps 
+  }, [guardians, multisigPDA]);
 
   // Kiểm tra người dùng đã ký đề xuất chưa trước khi thực hiện ký
   const hasCurrentUserSigned = (proposal: Proposal): boolean => {
@@ -905,19 +951,23 @@ export function TransactionsContent() {
                             </div>
                           )}
                           
-                          {transaction.proposal && !transaction.proposal.transactionSignature && transaction.proposal.status !== "Executed" && (
+                          {/* Log debugging info */}
+                          {logDebuggingInfo(transaction)}
+                          
+                          {/* Nút Ký đề xuất */}
+                          {transaction.status.toLowerCase() === "pending" && (
                             <div className="mt-4 flex justify-end">
                               <Button
                                 onClick={() => handleSignProposal(transaction.proposal!)}
-                                disabled={isSigning || hasCurrentUserSigned(transaction.proposal!)}
+                                disabled={isSigning || (transaction.proposal && hasCurrentUserSigned(transaction.proposal))}
                                 className="transition-transform hover:scale-105"
                               >
-                                {isSigning && transaction.proposal.proposalId === activeProposalId ? (
+                                {isSigning && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
                                   <span className="flex items-center">
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     Đang ký...
                                   </span>
-                                ) : hasCurrentUserSigned(transaction.proposal!) ? (
+                                ) : transaction.proposal && hasCurrentUserSigned(transaction.proposal) ? (
                                   "Đã ký"
                                 ) : (
                                   "Ký đề xuất"
@@ -926,7 +976,7 @@ export function TransactionsContent() {
                             </div>
                           )}
 
-                          {transaction.proposal && transaction.proposal.status === "Ready" && (
+                          {transaction.proposal && transaction.proposal.status.toLowerCase() === "ready" && (
                             <div className="mt-4 flex justify-end">
                               <Button
                                 onClick={() => handleExecuteProposal(transaction.proposal!)}

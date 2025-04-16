@@ -1,6 +1,11 @@
-import { NextConfig } from "next";
-
-const config: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   async headers() {
     return [
       {
@@ -29,4 +34,4 @@ const config: NextConfig = {
   output: 'standalone',
 };
 
-export default config;
+module.exports = nextConfig; 

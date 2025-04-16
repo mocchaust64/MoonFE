@@ -162,8 +162,8 @@ const localCreateProposal = async (
       const sStart = rEnd + 2;
       const sEnd = sStart + sLength;
       
-      let r = derSignature.slice(rStart, rEnd);
-      let s = derSignature.slice(sStart, sEnd);
+      const r = derSignature.slice(rStart, rEnd);
+      const s = derSignature.slice(sStart, sEnd);
       
       const rPadded = new Uint8Array(32);
       const sPadded = new Uint8Array(32);

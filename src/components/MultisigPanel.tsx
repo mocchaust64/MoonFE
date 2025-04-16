@@ -579,6 +579,10 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
               await connection.confirmTransaction(signature, "confirmed");
 
               // Tạo đối tượng proposal để lưu vào Firebase
+              const guardianPDA = await getGuardianPDA(
+                multisigPDAObj,
+                guardianId.toNumber()
+              );
               const proposalData = {
                 proposalId: proposalId.toNumber(),
                 multisigAddress: multisigPDAObj.toString(),
@@ -587,7 +591,7 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
                 status: "pending",
                 createdAt: Timestamp.now(),
                 creator: payerKeypair.publicKey.toString(),
-                signers: [], // Không tự động coi người tạo đã ký, để họ ký riêng như các guardian khác
+                signers: [guardianPDA.toString()], // Chuyển guardianPDA sang string
                 requiredSignatures: threshold, // Chỉ lấy số threshold từ useWalletInfo
                 amount: amountLamports.toNumber(),
                 destination: destinationPubkey.toString(),
