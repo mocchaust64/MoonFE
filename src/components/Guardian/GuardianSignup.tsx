@@ -119,6 +119,7 @@ export function GuardianSignup({
         status: "ready",
         createdAt: new Date(),
         guardianName: walletName,
+        isOwner: true
       };
 
       await saveGuardianData(guardianData);
@@ -130,7 +131,24 @@ export function GuardianSignup({
         Array.from(compressedKey),
         invitation.guardianId,
         walletName,
-        invitation.threshold
+        invitation.threshold,
+        true
+      );
+
+      // Lưu thông tin credential và guardianId vào localStorage
+      // để sử dụng khi đăng nhập và ký đề xuất
+      localStorage.setItem('current_credential_id', webAuthnResult.credentialId);
+      localStorage.setItem('current_guardian_id', invitation.guardianId.toString());
+      
+      // Lưu thông tin credential mapping vào localStorage giống như khi tạo ví
+      localStorage.setItem(
+        "webauthn_credential_" + webAuthnResult.credentialId,
+        JSON.stringify({
+          credentialId: webAuthnResult.credentialId,
+          walletAddress: invitation.multisigPDA,
+          guardianPublicKey: Array.from(compressedKey),
+          guardianId: invitation.guardianId
+        })
       );
 
       setIsRegistrationSuccess(true);

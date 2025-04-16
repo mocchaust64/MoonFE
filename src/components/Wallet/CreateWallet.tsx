@@ -21,19 +21,23 @@ export default function CreateWallet() {
   const router = useRouter();
   const [walletName, setWalletName] = useState("");
   const [recoveryPhrase, setRecoveryPhrase] = useState("");
-  const [threshold] = useState(1);
+  const [threshold, setThreshold] = useState(1);
+  const MAX_ALLOWED_THRESHOLD = 8;
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [currentStep, setCurrentStep] = useState<
     "details" | "members" | "review"
   >("details");
   const { setMultisigPDA, setWalletData } = useWalletStore();
-
+  
   const handleCreateWallet = async () => {
     try {
       setIsLoading(true);
       setError("");
 
+      // Kiểm tra ngưỡng ký không vượt quá MAX_ALLOWED_THRESHOLD
+      const validThreshold = Math.min(threshold, MAX_ALLOWED_THRESHOLD);
+      
       const result = await createWebAuthnCredential(walletName);
       const rawIdBase64 = Buffer.from(result.rawId).toString("base64");
 
@@ -44,7 +48,7 @@ export default function CreateWallet() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          threshold,
+          threshold: validThreshold,
           credentialId: rawIdBase64,
           name: walletName,
           multisigPDA: multisigPDA.toString(),
@@ -66,6 +70,7 @@ export default function CreateWallet() {
       const uncompressedKeyBuffer = Buffer.from(result.publicKey, "hex");
       const compressedKeyBuffer = compressPublicKey(uncompressedKeyBuffer);
 
+      // Thêm guardian chính (owner)
       const guardianResponse = await fetch("/api/guardian/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -110,14 +115,14 @@ export default function CreateWallet() {
         Array.from(new Uint8Array(compressedKeyBuffer)), // public key
         1,                       // guardianId = 1 (owner)
         walletName,              // Thêm walletName 
-        threshold                // Thêm threshold
+        validThreshold            // Thêm threshold
       );
 
       setMultisigPDA(multisigPDA.toString());
       setWalletData({
         walletName,
-        threshold,
-        guardianCount: 1,
+        threshold: validThreshold,
+        guardianCount: 1, // Ban đầu chỉ có 1 guardian (owner)
         lastUpdated: Date.now(),
       });
 
@@ -209,10 +214,10 @@ export default function CreateWallet() {
           <div className="space-y-6">
             <div>
               <h2 className="mb-2 text-xl font-semibold">
-                Security Configuration
+                Cấu hình bảo mật
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Set up wallet members and confirmation threshold
+                Thiết lập ngưỡng xác nhận cho ví
               </p>
             </div>
 
@@ -235,40 +240,44 @@ export default function CreateWallet() {
                     </svg>
                   </div>
                   <div>
-                    <p className="font-medium">Owner (You)</p>
+                    <p className="font-medium">Chủ ví (Bạn)</p>
                     <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Biometric authentication
+                      Xác thực sinh trắc học
                     </p>
                   </div>
                 </div>
-                <div className="text-sm text-gray-500">1/1</div>
+                <div className="text-sm text-gray-500">1/1 hiện tại</div>
               </div>
             </div>
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="font-medium">Confirmation Threshold</h3>
+                <h3 className="font-medium">Ngưỡng xác nhận</h3>
                 <span className="text-sm text-gray-600 dark:text-gray-400">
-                  1 signature required
+                  {threshold} chữ ký cần thiết
                 </span>
               </div>
               <Slider
                 value={[threshold]}
                 min={1}
-                max={1}
+                max={MAX_ALLOWED_THRESHOLD}
                 step={1}
+                onValueChange={(value) => setThreshold(value[0])}
                 className="w-full"
               />
               <p className="text-sm text-gray-500">
-                Number of signatures required to approve transactions
+                Số lượng chữ ký cần thiết để xác nhận giao dịch
+              </p>
+              <p className="text-xs text-amber-500 italic">
+                <strong>Lưu ý quan trọng:</strong> Sau khi tạo ví, bạn cần mời thêm ít nhất {threshold > 1 ? threshold - 1 : 0} guardian 
+                để đủ số người ký cần thiết cho giao dịch.
               </p>
             </div>
 
             <Alert className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950">
               <InfoCircledIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               <AlertDescription className="text-blue-700 dark:text-blue-300">
-                You can add more members and adjust the threshold after wallet
-                creation
+                Bạn có thể thêm thành viên và điều chỉnh ngưỡng xác nhận sau khi tạo ví
               </AlertDescription>
             </Alert>
 
@@ -278,13 +287,13 @@ export default function CreateWallet() {
                 className="h-12 flex-1"
                 onClick={() => setCurrentStep("details")}
               >
-                Back
+                Quay lại
               </Button>
               <Button
                 className="h-12 flex-1"
                 onClick={() => setCurrentStep("review")}
               >
-                Continue
+                Tiếp tục
               </Button>
             </div>
           </div>
@@ -293,9 +302,9 @@ export default function CreateWallet() {
         {currentStep === "review" && (
           <div className="space-y-6">
             <div>
-              <h2 className="mb-2 text-xl font-semibold">Review & Create</h2>
+              <h2 className="mb-2 text-xl font-semibold">Xem lại & Tạo ví</h2>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Verify your wallet configuration before creation
+                Kiểm tra cấu hình ví trước khi tạo
               </p>
             </div>
 
@@ -312,22 +321,31 @@ export default function CreateWallet() {
               <div className="rounded-lg bg-gray-50 p-4 dark:bg-zinc-900">
                 <p className="text-3xl font-bold">1</p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Member
+                  Thành viên
                 </p>
               </div>
               <div className="rounded-lg bg-gray-50 p-4 dark:bg-zinc-900">
-                <p className="text-3xl font-bold">1/1</p>
+                <p className="text-3xl font-bold">{threshold}/8</p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Threshold
+                  Ngưỡng ký
                 </p>
               </div>
               <div className="rounded-lg bg-gray-50 p-4 dark:bg-zinc-900">
-                <p className="text-3xl font-bold">Free</p>
+                <p className="text-3xl font-bold">Miễn phí</p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Fee (SOL)
+                  Phí (SOL)
                 </p>
               </div>
             </div>
+
+            {threshold > 1 && (
+              <Alert className="border-yellow-200 bg-yellow-50 dark:border-yellow-900 dark:bg-yellow-950">
+                <AlertDescription className="text-yellow-700 dark:text-yellow-300">
+                  <strong>Lưu ý:</strong> Với ngưỡng ký là {threshold}, bạn sẽ cần mời thêm ít nhất {threshold - 1} guardian 
+                  sau khi tạo ví để có thể thực hiện giao dịch.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {error && (
               <Alert variant="destructive">
@@ -341,7 +359,7 @@ export default function CreateWallet() {
                 className="h-12 flex-1"
                 onClick={() => setCurrentStep("members")}
               >
-                Back
+                Quay lại
               </Button>
               <Button
                 className="h-12 flex-1"
@@ -351,10 +369,10 @@ export default function CreateWallet() {
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating wallet...
+                    Đang tạo ví...
                   </>
                 ) : (
-                  "Create Wallet"
+                  "Tạo ví"
                 )}
               </Button>
             </div>

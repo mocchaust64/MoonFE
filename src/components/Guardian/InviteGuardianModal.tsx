@@ -73,7 +73,7 @@ export function InviteGuardianModal({
 
       const newGuardianId = await findNextAvailableGuardianId();
       const newInviteCode = generateRandomCode(8);
-      const baseUrl = "https://b5e3-1-52-134-69.ngrok-free.app";
+      const baseUrl = "https://e187-14-174-106-138.ngrok-free.app";
       const newInviteLink = `${baseUrl}/guardian/${newInviteCode}`;
 
       await saveInvitation({

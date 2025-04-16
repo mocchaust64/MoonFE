@@ -247,3 +247,122 @@ export const deleteGuardianData = async (
     return false;
   }
 };
+
+/**
+ * Tạo chuỗi ngẫu nhiên với độ dài xác định
+ * @param length Độ dài chuỗi ngẫu nhiên
+ * @returns Chuỗi ngẫu nhiên
+ */
+function generateRandomString(length: number): string {
+  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    const randomIndex = Math.floor(Math.random() * charset.length);
+    result += charset.charAt(randomIndex);
+  }
+  return result;
+}
+
+/**
+ * Lấy danh sách tất cả guardian của một ví, bao gồm cả những guardian đang chờ xác nhận
+ * @param walletAddress Địa chỉ ví
+ * @returns Danh sách guardians (bao gồm cả đang chờ xác nhận)
+ */
+export async function getAllGuardians(walletAddress: string) {
+  try {
+    // 1. Lấy danh sách guardian đã xác nhận
+    const confirmedGuardiansQuery = query(
+      collection(db, "guardians"),
+      where("multisigAddress", "==", walletAddress)
+    );
+    const confirmedGuardiansSnapshot = await getDocs(confirmedGuardiansQuery);
+    const confirmedGuardians = confirmedGuardiansSnapshot.docs.map((doc) => doc.data());
+    
+    // 2. Lấy danh sách lời mời đang chờ xác nhận
+    const pendingInvitesQuery = query(
+      collection(db, "guardian_invites"),
+      where("multisigAddress", "==", walletAddress)
+    );
+    const pendingInvitesSnapshot = await getDocs(pendingInvitesQuery);
+    const pendingGuardians = pendingInvitesSnapshot.docs.map((doc) => doc.data());
+    
+    // 3. Kết hợp cả hai danh sách
+    return [...confirmedGuardians, ...pendingGuardians];
+  } catch (error) {
+    console.error("Lỗi khi lấy danh sách guardian:", error);
+    return [];
+  }
+}
+
+/**
+ * Tìm ID guardian lớn nhất đã được sử dụng (bao gồm cả đang chờ xác nhận)
+ * @param walletAddress Địa chỉ ví
+ * @returns ID lớn nhất
+ */
+export async function getHighestGuardianId(walletAddress: string) {
+  try {
+    const allGuardians = await getAllGuardians(walletAddress);
+    
+    let highestId = 0;
+    allGuardians.forEach(guardian => {
+      // Đảm bảo ID là số
+      const guardianId = typeof guardian.guardianId === 'number' 
+        ? guardian.guardianId 
+        : parseInt(guardian.guardianId, 10);
+      
+      if (!isNaN(guardianId) && guardianId > highestId) {
+        highestId = guardianId;
+      }
+    });
+    
+    return highestId;
+  } catch (error) {
+    console.error("Lỗi khi tìm ID guardian cao nhất:", error);
+    return 0;
+  }
+}
+
+/**
+ * Tạo mã mời guardian mới với ID không trùng lặp
+ * @param walletAddress Địa chỉ ví
+ * @param guardianName Tên guardian
+ * @param guardianEmail Email guardian
+ * @returns Mã lời mời
+ */
+export async function createGuardianInvitation(
+  walletAddress: string,
+  guardianName: string,
+  guardianEmail: string
+) {
+  try {
+    // Tìm ID lớn nhất đã sử dụng (bao gồm cả đang chờ xác nhận)
+    const highestId = await getHighestGuardianId(walletAddress);
+    
+    // Tạo ID mới (tăng 1 từ ID cao nhất)
+    const newGuardianId = highestId + 1;
+    console.log(`Tạo guardian mới với ID: ${newGuardianId} (ID cao nhất hiện tại: ${highestId})`);
+    
+    // Tạo mã lời mời
+    const inviteCode = generateRandomString(8);
+    const inviteRef = doc(db, "guardian_invites", inviteCode);
+    
+    // Lưu thông tin lời mời vào Firebase
+    await setDoc(inviteRef, {
+      multisigAddress: walletAddress,
+      guardianName,
+      guardianEmail,
+      guardianId: newGuardianId,
+      inviteCode,
+      status: "pending",
+      createdAt: serverTimestamp()
+    });
+    
+    // Gửi email thông báo (nếu cần)
+    // ... existing email sending code ...
+    
+    return { inviteCode, guardianId: newGuardianId };
+  } catch (error) {
+    console.error("Lỗi khi tạo lời mời guardian:", error);
+    throw error;
+  }
+}

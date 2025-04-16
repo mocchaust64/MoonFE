@@ -30,6 +30,7 @@ export interface GuardianData {
   createdAt: Date | Timestamp;
   completedAt?: Date | Timestamp;
   txSignature?: string; // Transaction signature after completion
+  isOwner?: boolean; // Guardian có quyền owner hay không (mặc định là true)
 }
 
 // WebAuthn credential mapping

@@ -229,7 +229,7 @@ export function TransactionsContent() {
       console.log("No multisig address found in loadProposalsFromFirebase");
       return;
     }
-    
+
     console.log("Loading proposals from Firebase for multisig:", multisigPDA.toString());
     
     const now = Date.now();
@@ -314,9 +314,43 @@ export function TransactionsContent() {
         throw new Error("Không tìm thấy MultisigPDA");
       }
       
-      if (!guardianId) {
-        throw new Error("Không tìm thấy thông tin guardianId");
+      // Lấy guardianId từ localStorage thay vì sử dụng guardianId từ state
+      let currentGuardianId = guardianId;
+      const storedGuardianId = localStorage.getItem('current_guardian_id');
+      
+      if (storedGuardianId) {
+        // Nếu có guardianId trong localStorage, ưu tiên sử dụng nó
+        currentGuardianId = parseInt(storedGuardianId);
+        console.log(`Sử dụng guardianId từ localStorage: ${currentGuardianId}`);
+      } else if (!currentGuardianId) {
+        // Nếu không có guardianId trong state và localStorage, thử lấy từ credential ID
+        const storedCredentialId = localStorage.getItem('current_credential_id');
+        if (storedCredentialId) {
+          try {
+            const localStorageKey = "webauthn_credential_" + storedCredentialId;
+            const localMapping = localStorage.getItem(localStorageKey);
+            if (localMapping) {
+              const mappingData = JSON.parse(localMapping);
+              if (mappingData.guardianId && mappingData.walletAddress === multisigPDA.toString()) {
+                // Đảm bảo mappingData.guardianId là số
+                const guardianIdFromMapping = Number(mappingData.guardianId);
+                currentGuardianId = guardianIdFromMapping;
+                console.log(`Tìm thấy guardianId từ credential mapping: ${guardianIdFromMapping}`);
+                // Lưu lại guardianId vào localStorage để sử dụng sau này
+                localStorage.setItem('current_guardian_id', String(guardianIdFromMapping));
+              }
+            }
+          } catch (e) {
+            console.error("Lỗi khi tìm guardianId từ credential mapping:", e);
+          }
+        }
       }
+      
+      if (!currentGuardianId) {
+        throw new Error("Không tìm thấy thông tin guardianId. Vui lòng đăng nhập lại.");
+      }
+      
+      console.log(`Ký đề xuất với guardianId: ${currentGuardianId}`);
       
       // Tạo keypair từ feePayer secret key
         let feePayerKeypair;
@@ -337,7 +371,7 @@ export function TransactionsContent() {
         connection,
         proposal,
         multisigPDA,
-        guardianId,
+        currentGuardianId,
         feePayerKeypair,
         credentialId || undefined
       );
@@ -498,7 +532,9 @@ export function TransactionsContent() {
         // Tạo explorer URL
         const explorerLink = process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta'
           ? `https://explorer.solana.com/tx/${signature}`
-          : `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+          : process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet'
+            ? `https://explorer.solana.com/tx/${signature}?cluster=devnet` 
+            : `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`;
           
         toast.success(
           <div>
@@ -723,7 +759,7 @@ export function TransactionsContent() {
       setGuardianPDA(primaryGuardian.address);
       setGuardianId(primaryGuardian.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guardians, multisigPDA]);
 
   // Kiểm tra người dùng đã ký đề xuất chưa trước khi thực hiện ký
@@ -883,7 +919,9 @@ export function TransactionsContent() {
                                 <a
                                   href={process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta'
                                     ? `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}`
-                                    : `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}?cluster=devnet`}
+                                    : process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet'
+                                      ? `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}?cluster=devnet` 
+                                      : `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}?cluster=custom&customUrl=http://localhost:8899`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-blue-500 underline hover:text-blue-700"

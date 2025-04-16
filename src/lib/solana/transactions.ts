@@ -126,7 +126,8 @@ export const createAddGuardianTxManual = (
   guardianName: string,
   guardianId: number,
   recoveryHashIntermediate: Uint8Array,
-  webauthnPubkey?: Uint8Array
+  webauthnPubkey?: Uint8Array,
+  isOwner: boolean = true
 ): Transaction => {
   try {
     // Discriminator cho add_guardian
@@ -141,8 +142,8 @@ export const createAddGuardianTxManual = (
     const guardianNameLenBuffer = Buffer.alloc(4);
     guardianNameLenBuffer.writeUInt32LE(guardianNameBuffer.length, 0);
     
-    // Đặt is_owner = true vì đây là owner
-    const isOwnerByte = new Uint8Array([1]); // true = 1
+    // Đặt is_owner theo tham số đầu vào
+    const isOwnerByte = new Uint8Array([isOwner ? 1 : 0]); // true = 1, false = 0
     
     // Tạo dữ liệu instruction
     const buffers = [

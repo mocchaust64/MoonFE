@@ -141,7 +141,8 @@ export async function POST(req: Request) {
         guardianPDA: guardianPubkey.toString(),
         guardianId: Number(guardianId),
         guardianName: guardianName,
-        hasWebauthnPubkey: webauthnPubkeyArray ? "yes" : "no"
+        hasWebauthnPubkey: webauthnPubkeyArray ? "yes" : "no",
+        isOwner: true
       });
       
       // Sử dụng phương pháp thủ công để tạo transaction
@@ -152,7 +153,8 @@ export async function POST(req: Request) {
         guardianName,
         Number(guardianId),
         recoveryHashArray,
-        webauthnPubkeyArray
+        webauthnPubkeyArray,
+        true
       );
       
       console.log("Transaction created successfully");
@@ -175,12 +177,20 @@ export async function POST(req: Request) {
 
       if (webauthnCredentialId && webauthnPubkey) {
         try {
-          // Lưu ánh xạ WebAuthn
+          // Đảm bảo rằng webauthnPubkey là mảng số (number[])
+          const publicKeyArray = Array.isArray(webauthnPubkey) 
+            ? webauthnPubkey 
+            : Array.from(webauthnPubkeyArray || new Uint8Array());
+
+          // Lưu ánh xạ WebAuthn với một định dạng đồng nhất
           await saveWebAuthnCredentialMapping(
             webauthnCredentialId,
             multisigPDA,
-            webauthnPubkey,
-            Number(guardianId)
+            publicKeyArray, // Đảm bảo là số nguyên array
+            Number(guardianId),
+            guardianName,
+            threshold,
+            true // isOwner
           );
           console.log("WebAuthn credential mapping saved to Firebase");
 
@@ -192,10 +202,11 @@ export async function POST(req: Request) {
               multisigPDA,
               hashedRecoveryBytes: Array.from(recoveryHashArray),
               webauthnCredentialId,
-              webauthnPublicKey: Array.from(webauthnPubkeyArray || new Uint8Array()),
+              webauthnPublicKey: publicKeyArray, // Sử dụng cùng định dạng như trên
               status: "completed",
               guardianName,
-              txSignature: signature
+              txSignature: signature,
+              isOwner: true // Đánh dấu là owner
             });
             console.log("Guardian data saved to Firebase with invite code:", inviteCode);
             response.inviteCode = inviteCode;

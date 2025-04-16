@@ -75,6 +75,8 @@ export function GuardianConfirm({
           webauthnPubkey: guardianData.webauthnPublicKey,
           webauthnCredentialId: guardianData.webauthnCredentialId,
           multisigPDA: multisigPDA,
+          isOwner: true,
+          inviteCode: guardian.inviteCode
         }),
       });
 

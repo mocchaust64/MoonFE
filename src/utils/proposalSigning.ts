@@ -1,11 +1,18 @@
+import { getFirestore } from 'firebase/firestore';
 import { PublicKey, Transaction, TransactionInstruction, Connection, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY, SYSVAR_CLOCK_PUBKEY } from '@solana/web3.js';
 import { BN } from '@coral-xyz/anchor';
 import { sha256 } from '@noble/hashes/sha256';
-import { getWalletByCredentialId } from '@/lib/firebase/webAuthnService';
+import { getWalletByCredentialId } from '../lib/firebase/webAuthnService';
 import { getGuardianPDA } from './credentialUtils';
-import { addSignerToProposal, updateProposalStatus } from '@/lib/firebase/proposalService';
+import { addSignerToProposal, updateProposalStatus } from '../lib/firebase/proposalService';
 import { PROGRAM_ID } from './constants';
 import { compressPublicKey } from './bufferUtils';
+import { Keypair } from '@solana/web3.js';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../lib/firebase/config';
+import { createSecp256r1Instruction } from '../lib/solana/secp256r1';
+import { Proposal } from '../lib/firebase/proposalService';
+import { program } from '../lib/solana';
 
 // Constants
 const SECP256R1_PROGRAM_ID = new PublicKey('Secp256r1SigVerify1111111111111111111111111');
@@ -185,7 +192,7 @@ export const handleSignProposal = async (
     
     // Lấy lại thông tin đề xuất từ Firebase để đảm bảo có dữ liệu mới nhất
     try {
-      const { getProposalById } = await import('@/lib/firebase/proposalService');
+      const { getProposalById } = await import('../lib/firebase/proposalService');
       const updatedProposal = await getProposalById(walletAddressPubkey.toString(), currentSigningProposal.proposalId);
       
       if (updatedProposal) {
@@ -451,28 +458,6 @@ export const derToRaw = (derSignature: Uint8Array): Uint8Array => {
 };
 
 /**
- * Chuẩn hóa chữ ký về dạng Low-S
- */
-export const normalizeSignatureToLowS = (signature: Buffer): Buffer => {
-  // Phân tách r và s từ signature (mỗi cái 32 bytes)
-  const r = signature.slice(0, 32);
-  const s = signature.slice(32, 64);
-  
-  // Chuyển s thành BN để so sánh với HALF_ORDER
-  const sBN = new BN(s);
-  
-  // Kiểm tra nếu s > half_order
-  if (sBN.gt(SECP256R1_HALF_ORDER)) {
-    // Tính s' = order - s
-    const sNormalized = SECP256R1_ORDER.sub(sBN);
-    const sNormalizedBuffer = sNormalized.toArrayLike(Buffer, 'be', 32);
-    return Buffer.concat([r, sNormalizedBuffer]);
-  }
-  
-  return signature;
-};
-
-/**
  * Tạo verification data từ WebAuthn assertion
  */
 export const createWebAuthnVerificationData = async (
@@ -495,80 +480,476 @@ export const createWebAuthnVerificationData = async (
 };
 
 /**
- * Tạo instruction cho chương trình Secp256r1SigVerify
+ * Lấy thông tin WebAuthn public key của guardian theo multisigAddress và guardianId
+ * @param multisigPDA Địa chỉ ví multisig
+ * @param guardianId ID của guardian
+ * @returns Public key của guardian (dạng Uint8Array)
  */
-export const createSecp256r1Instruction = (
-  message: Buffer, 
-  publicKey: Buffer,
-  signature: Buffer,
-  shouldFlipPublicKey: boolean = false
-): TransactionInstruction => {
-  // Đảm bảo public key có đúng định dạng (compressed, 33 bytes)
-  if (publicKey.length !== 33) {
-    throw new Error(`Public key phải có đúng 33 bytes, nhưng có ${publicKey.length} bytes`);
+export async function getGuardianWebAuthnPublicKey(
+  multisigPDA: PublicKey | string,
+  guardianId: number
+): Promise<Uint8Array | null> {
+  try {
+    console.log("Đang tìm WebAuthn public key...");
+    
+    // Chuẩn hóa input
+    const multisigAddress = typeof multisigPDA === 'string' 
+      ? multisigPDA 
+      : multisigPDA.toString();
+    
+    console.log(`MultisigPDA: ${multisigAddress}, GuardianID: ${guardianId}`);
+    
+    // Kiểm tra thông tin trong localStorage trước
+    const storedCredentialId = localStorage.getItem('current_credential_id');
+    if (storedCredentialId) {
+      const localStorageKey = "webauthn_credential_" + storedCredentialId;
+      const localMapping = localStorage.getItem(localStorageKey);
+      
+      if (localMapping) {
+        try {
+          const mappingData = JSON.parse(localMapping);
+          console.log("Thông tin WebAuthn từ localStorage:", {
+            credentialId: storedCredentialId,
+            guardianId: mappingData.guardianId,
+            walletAddress: mappingData.walletAddress
+          });
+          
+          // Kiểm tra nếu mapping có guardianId và khớp với ví multisig
+          if (mappingData.guardianPublicKey && 
+              mappingData.walletAddress === multisigAddress) {
+            
+            // Nếu guardianId từ mapping khác với guardianId truyền vào, ưu tiên dùng guardianId từ mapping
+            if (mappingData.guardianId !== guardianId) {
+              console.warn(`QUAN TRỌNG: GuardianId từ localStorage (${mappingData.guardianId}) khác với guardianId truyền vào (${guardianId}). Sử dụng guardianId từ localStorage!`);
+              // Cập nhật lại guardianId trong localStorage
+              localStorage.setItem('current_guardian_id', mappingData.guardianId.toString());
+            }
+            
+            console.log("Sử dụng thông tin guardian từ localStorage");
+            const publicKeyArray = Array.isArray(mappingData.guardianPublicKey) 
+              ? new Uint8Array(mappingData.guardianPublicKey)
+              : mappingData.guardianPublicKey;
+              
+            // Log chi tiết về key
+            console.log("=========== PUBLIC KEY DEBUG INFO ===========");
+            console.log("WebAuthn Public Key length:", publicKeyArray.length);
+            console.log("WebAuthn Public Key format:", publicKeyArray[0] === 2 ? "Compressed (0x2)" : 
+                                                   publicKeyArray[0] === 3 ? "Compressed (0x3)" : 
+                                                   publicKeyArray[0] === 4 ? "Uncompressed (0x4)" : "Unknown");
+            console.log("WebAuthn Public Key hex:", Buffer.from(publicKeyArray).toString('hex'));
+            console.log("=========================================");
+            
+            return publicKeyArray;
+          }
+        } catch (e) {
+          console.error("Lỗi khi parse thông tin credential từ localStorage:", e);
+        }
+      }
+    }
+    
+    // Nếu không tìm thấy trong localStorage, truy vấn từ Firebase
+    try {
+      const { getWalletByCredentialId, getCredentialsByWallet } = await import("@/lib/firebase/webAuthnService");
+      
+      // Nếu có credential ID, ưu tiên tìm theo credential ID
+      if (storedCredentialId) {
+        console.log("Tìm guardian theo credential ID:", storedCredentialId);
+        const normalizedCredentialId = await (await import("@/lib/firebase/webAuthnService")).normalizeCredentialId(storedCredentialId);
+        const credentialData = await getWalletByCredentialId(normalizedCredentialId);
+        
+        if (credentialData && 
+            credentialData.walletAddress === multisigAddress && 
+            Array.isArray(credentialData.guardianPublicKey)) {
+          
+          console.log("Tìm thấy mapping theo credential ID:", {
+            guardianId: credentialData.guardianId,
+            walletAddress: credentialData.walletAddress
+          });
+          
+          // Nếu guardianId từ Firebase khác với guardianId truyền vào, ưu tiên dùng từ Firebase
+          if (credentialData.guardianId !== guardianId) {
+            console.warn(`QUAN TRỌNG: GuardianId từ Firebase (${credentialData.guardianId}) khác với guardianId truyền vào (${guardianId}). Sử dụng guardianId từ Firebase!`);
+            // Cập nhật lại guardianId trong localStorage
+            localStorage.setItem('current_guardian_id', credentialData.guardianId.toString());
+          }
+          
+          const publicKeyArray = new Uint8Array(credentialData.guardianPublicKey);
+          
+          // Log chi tiết về key
+          console.log("=========== PUBLIC KEY DEBUG INFO ===========");
+          console.log("WebAuthn Public Key length:", publicKeyArray.length);
+          console.log("WebAuthn Public Key format:", publicKeyArray[0] === 2 ? "Compressed (0x2)" : 
+                                                publicKeyArray[0] === 3 ? "Compressed (0x3)" : 
+                                                publicKeyArray[0] === 4 ? "Uncompressed (0x4)" : "Unknown");
+          console.log("WebAuthn Public Key hex:", Buffer.from(publicKeyArray).toString('hex'));
+          console.log("=========================================");
+          
+          return publicKeyArray;
+        }
+      }
+      
+      // Nếu không tìm thấy theo credential ID, tìm theo multisigPDA và guardianId
+      console.log("Tìm guardian theo multisig và guardian ID:", multisigAddress, guardianId);
+      const credentials = await getCredentialsByWallet(multisigAddress);
+      
+      // Tìm guardian phù hợp với guardianId
+      const guardianCredential = credentials.find(cred => cred.guardianId === guardianId);
+      
+      if (guardianCredential && Array.isArray(guardianCredential.guardianPublicKey)) {
+        console.log("Tìm thấy guardian theo multisig và guardian ID:", {
+          guardianId: guardianCredential.guardianId,
+          credentialId: guardianCredential.credentialId,
+        });
+        
+        const publicKeyArray = new Uint8Array(guardianCredential.guardianPublicKey);
+        
+        // Log chi tiết về key
+        console.log("=========== PUBLIC KEY DEBUG INFO ===========");
+        console.log("WebAuthn Public Key length:", publicKeyArray.length);
+        console.log("WebAuthn Public Key format:", publicKeyArray[0] === 2 ? "Compressed (0x2)" : 
+                                               publicKeyArray[0] === 3 ? "Compressed (0x3)" : 
+                                               publicKeyArray[0] === 4 ? "Uncompressed (0x4)" : "Unknown");
+        console.log("WebAuthn Public Key hex:", Buffer.from(publicKeyArray).toString('hex'));
+        console.log("=========================================");
+        
+        // Cập nhật localStorage để lần sau nhanh hơn
+        try {
+          localStorage.setItem('current_guardian_id', guardianCredential.guardianId.toString());
+          localStorage.setItem('current_credential_id', guardianCredential.credentialId);
+          localStorage.setItem(
+            "webauthn_credential_" + guardianCredential.credentialId,
+            JSON.stringify({
+              credentialId: guardianCredential.credentialId,
+              walletAddress: guardianCredential.walletAddress,
+              guardianPublicKey: Array.from(publicKeyArray),
+              guardianId: guardianCredential.guardianId
+            })
+          );
+          console.log("Đã cập nhật thông tin guardian vào localStorage");
+        } catch (e) {
+          console.warn("Không thể lưu vào localStorage:", e);
+        }
+        
+        return publicKeyArray;
+      }
+      
+      // Nếu không tìm thấy guardian nào khớp
+      console.error(`Không tìm thấy guardian với ID ${guardianId} cho ví ${multisigAddress}`);
+      console.error("Danh sách guardians tìm thấy:", credentials.map(c => ({ id: c.guardianId, credentialId: c.credentialId })));
+      return null;
+      
+    } catch (error) {
+      console.error("Lỗi khi truy vấn Firebase:", error);
+      throw new Error(`Lỗi khi lấy WebAuthn public key: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`);
+    }
+  } catch (error) {
+    console.error(`Lỗi khi lấy WebAuthn public key:`, error);
+    return null;
+  }
+}
+
+/**
+ * Lấy thông tin guardian từ Firebase theo multisigAddress và guardianId
+ */
+async function getGuardianCredentialByMultisigAndId(multisigAddress: string, guardianId: number) {
+  try {
+    // Tạo query tìm kiếm guardian trong webauthn_credentials
+    const guardiansRef = collection(db, "webauthn_credentials");
+    const q = query(
+      guardiansRef,
+      where("walletAddress", "==", multisigAddress),
+      where("guardianId", "==", guardianId)
+    );
+    
+    const querySnapshot = await getDocs(q);
+    
+    if (querySnapshot.empty) {
+      console.error(`Không tìm thấy guardian với ID ${guardianId} cho ví ${multisigAddress}`);
+      return null;
+    }
+    
+    // Lấy dữ liệu của guardian đầu tiên tìm thấy
+    return querySnapshot.docs[0].data();
+  } catch (error) {
+    console.error("Lỗi khi truy vấn thông tin guardian:", error);
+    return null;
+  }
+}
+
+/**
+ * Cập nhật danh sách người ký đề xuất trong Firebase
+ */
+async function updateProposalSigners(proposal: Proposal, guardianId: number, txSignature: string) {
+  try {
+    // Sử dụng hàm addSignerToProposal
+    await addSignerToProposal(
+      proposal.multisigAddress,
+      proposal.proposalId,
+      `guardian_${guardianId}`
+    );
+    console.log(`Đã cập nhật thông tin người ký cho đề xuất ${proposal.proposalId}, guardian ${guardianId}`);
+  } catch (error) {
+    console.error("Lỗi khi cập nhật thông tin người ký:", error);
+  }
+}
+
+/**
+ * Ký đề xuất bằng WebAuthn và gửi transaction lên blockchain
+ */
+export async function signProposalWithWebAuthn(
+  connection: Connection,
+  proposal: Proposal,
+  multisigPDA: PublicKey,
+  guardianId: number | undefined,
+  feePayer: Keypair,
+  credentialId?: string,
+): Promise<string> {
+  console.log("Bắt đầu ký đề xuất với WebAuthn...");
+  console.log("Proposal ID:", proposal.proposalId);
+  
+  try {
+    // Lấy guardianId từ localStorage nếu không được cung cấp
+    let actualGuardianId = guardianId;
+    if (actualGuardianId === undefined) {
+      console.log("guardianId không được cung cấp, lấy từ localStorage...");
+      const storedGuardianId = localStorage.getItem("current_guardian_id");
+      
+      if (!storedGuardianId) {
+        console.error("Không tìm thấy guardian ID trong localStorage");
+        throw new Error("Không tìm thấy guardian ID, không thể ký đề xuất");
+      }
+      
+      actualGuardianId = parseInt(storedGuardianId);
+      console.log("Đã lấy guardianId từ localStorage:", actualGuardianId);
+    } else {
+      console.log("Sử dụng guardianId được truyền vào:", actualGuardianId);
+    }
+    
+    console.log("Guardian ID cuối cùng sử dụng:", actualGuardianId);
+    
+    // Lấy thông tin mapping từ localStorage trước khi truy vấn Firebase
+    const storedCredentialId = localStorage.getItem("current_credential_id");
+    if (storedCredentialId) {
+      const localStorageKey = "webauthn_credential_" + storedCredentialId;
+      const localMapping = localStorage.getItem(localStorageKey);
+      
+      if (localMapping) {
+        try {
+          const mappingData = JSON.parse(localMapping);
+          console.log("Thông tin credential từ localStorage:", {
+            credentialId: storedCredentialId,
+            guardianId: mappingData.guardianId,
+            walletAddress: mappingData.walletAddress
+          });
+          
+          // Kiểm tra nếu guardianId từ localStorage khác với guardianId đang sử dụng
+          if (mappingData.guardianId !== actualGuardianId) {
+            console.warn("Cảnh báo: guardianId từ localStorage khác với guardianId đang sử dụng:", 
+              { fromMapping: mappingData.guardianId, current: actualGuardianId });
+          }
+        } catch (e) {
+          console.error("Lỗi khi parse thông tin credential từ localStorage:", e);
+        }
+      }
+    }
+    
+    // Lấy WebAuthn public key của guardian từ Firebase
+    const guardianWebAuthnPubkey = await getGuardianWebAuthnPublicKey(multisigPDA, actualGuardianId);
+    
+    if (!guardianWebAuthnPubkey) {
+      throw new Error(`Không tìm thấy WebAuthn public key cho guardian ID ${actualGuardianId}`);
+    }
+    
+    // Tính toán guardian PDA
+    const [guardianPDA] = await PublicKey.findProgramAddress(
+      [
+        Buffer.from("guardian"),
+        multisigPDA.toBuffer(),
+        new BN(actualGuardianId).toArrayLike(Buffer, "le", 8),
+      ],
+      PROGRAM_ID
+    );
+    
+    console.log("Guardian PDA:", guardianPDA.toString());
+    
+    // Tính toán proposal PDA
+    const [proposalPDA] = await PublicKey.findProgramAddress(
+      [
+        Buffer.from("proposal"),
+        multisigPDA.toBuffer(),
+        new BN(proposal.proposalId).toArrayLike(Buffer, "le", 8),
+      ],
+      PROGRAM_ID
+    );
+    
+    console.log("Proposal PDA:", proposalPDA.toString());
+    
+    // Tạo thông điệp cần ký
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    console.log("Current timestamp:", currentTimestamp);
+    
+    const messageToSign = Buffer.concat([
+      new BN(proposal.proposalId).toArrayLike(Buffer, "le", 8),
+      new BN(currentTimestamp).toArrayLike(Buffer, "le", 8),
+    ]);
+    
+    // Tạo challenge và tùy chọn cho WebAuthn
+    const challenge = messageToSign;
+    
+    // Lấy credential ID nếu không được cung cấp
+    let actualCredentialId = credentialId;
+    if (!actualCredentialId) {
+      console.log("credentialId không được cung cấp, lấy từ localStorage...");
+      const storedCredentialId = localStorage.getItem("current_credential_id");
+      
+      if (!storedCredentialId) {
+        throw new Error("Không tìm thấy credential ID, không thể ký đề xuất");
+      }
+      
+      actualCredentialId = storedCredentialId;
+    }
+    
+    console.log("Đang sử dụng credentialId:", actualCredentialId);
+    
+    // Tạo tùy chọn cho WebAuthn
+    const publicKeyCredentialRequestOptions = {
+      challenge,
+      timeout: 60000,
+      rpId: window.location.hostname,
+      userVerification: "preferred" as UserVerificationRequirement,
+      allowCredentials: [
+        {
+          id: Uint8Array.from(
+            atob(actualCredentialId),
+            (c) => c.charCodeAt(0)
+          ),
+          type: "public-key" as PublicKeyCredentialType,
+        },
+      ],
+    };
+    
+    console.log("Đang yêu cầu WebAuthn signature...");
+    
+    // Yêu cầu chữ ký WebAuthn
+    const credential = (await navigator.credentials.get({
+      publicKey: publicKeyCredentialRequestOptions,
+    })) as PublicKeyCredential;
+    
+    // Xử lý kết quả và lấy chữ ký
+    const response = credential.response as AuthenticatorAssertionResponse;
+    const signature = new Uint8Array(response.signature);
+    const clientDataJSON = new Uint8Array(response.clientDataJSON);
+    
+    console.log("Đã nhận WebAuthn signature");
+    
+    // Tạo instruction phê duyệt đề xuất bằng cách xây dựng instruction thủ công
+    // Tạo dữ liệu cho approve_proposal instruction
+    const approveProposalDiscriminator = Buffer.from([136, 108, 102, 85, 98, 114, 7, 147]); // Discriminator từ IDL
+
+    // Tạo các buffer cho tham số
+    const proposalIdBuffer = Buffer.alloc(8);
+    proposalIdBuffer.writeBigUInt64LE(BigInt(proposal.proposalId), 0);
+
+    const timestampBuffer = Buffer.alloc(8);
+    timestampBuffer.writeBigInt64LE(BigInt(currentTimestamp), 0);
+
+    // Chuẩn bị clientDataJSON buffer và độ dài
+    const clientDataJSONLenBuffer = Buffer.alloc(4);
+    clientDataJSONLenBuffer.writeUInt32LE(clientDataJSON.length, 0);
+
+    // Chuẩn bị signature buffer và độ dài
+    const signatureLenBuffer = Buffer.alloc(4);
+    signatureLenBuffer.writeUInt32LE(signature.length, 0);
+
+    // Chuẩn bị guardianPublicKey buffer và độ dài
+    const guardianPubkeyLenBuffer = Buffer.alloc(4);
+    guardianPubkeyLenBuffer.writeUInt32LE(guardianWebAuthnPubkey.length, 0);
+
+    // Tạo dữ liệu instruction
+    const approveData = Buffer.concat([
+      approveProposalDiscriminator,
+      proposalIdBuffer,
+      timestampBuffer,
+      clientDataJSONLenBuffer,
+      Buffer.from(clientDataJSON),
+      signatureLenBuffer,
+      Buffer.from(signature),
+      guardianPubkeyLenBuffer,
+      Buffer.from(guardianWebAuthnPubkey)
+    ]);
+
+    // Tạo instruction
+    const approveInstruction = new TransactionInstruction({
+      keys: [
+        { pubkey: multisigPDA, isSigner: false, isWritable: false },
+        { pubkey: guardianPDA, isSigner: false, isWritable: false },
+        { pubkey: proposalPDA, isSigner: false, isWritable: true },
+        { pubkey: feePayer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      programId: PROGRAM_ID,
+      data: approveData
+    });
+
+    // Thêm các tài khoản liên quan
+    approveInstruction.keys = [
+      { pubkey: multisigPDA, isSigner: false, isWritable: false },
+      { pubkey: guardianPDA, isSigner: false, isWritable: false },
+      { pubkey: proposalPDA, isSigner: false, isWritable: true },
+      { pubkey: feePayer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ];
+    
+    // Tạo và gửi transaction
+    const transaction = new Transaction();
+    transaction.add(approveInstruction);
+    transaction.feePayer = feePayer.publicKey;
+    
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    
+    transaction.sign(feePayer);
+    
+    console.log("Đang gửi transaction...");
+    const txSignature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    
+    console.log("Transaction đã được gửi:", txSignature);
+    
+    // Chờ xác nhận
+    await connection.confirmTransaction(txSignature, 'confirmed');
+    console.log("Transaction đã được xác nhận");
+    
+    // Cập nhật trạng thái đề xuất trong Firebase
+    await updateProposalSigners(proposal, actualGuardianId, txSignature);
+    
+    return txSignature;
+  } catch (error) {
+    console.error("Lỗi trong quá trình ký đề xuất:", error);
+    throw error;
+  }
+}
+
+/**
+ * Chuẩn hóa chữ ký về dạng Low-S
+ */
+export const normalizeSignatureToLowS = (signature: Buffer): Buffer => {
+  // Phân tách r và s từ signature (mỗi cái 32 bytes)
+  const r = signature.slice(0, 32);
+  const s = signature.slice(32, 64);
+  
+  // Chuyển s thành BN để so sánh với HALF_ORDER
+  const sBN = new BN(s);
+  
+  // Kiểm tra nếu s > half_order
+  if (sBN.gt(SECP256R1_HALF_ORDER)) {
+    // Tính s' = order - s
+    const sNormalized = SECP256R1_ORDER.sub(sBN);
+    const sNormalizedBuffer = sNormalized.toArrayLike(Buffer, 'be', 32);
+    return Buffer.concat([r, sNormalizedBuffer]);
   }
   
-  // Đảm bảo signature có đúng 64 bytes
-  if (signature.length !== 64) {
-    throw new Error(`Signature phải có đúng 64 bytes, nhưng có ${signature.length} bytes`);
-  }
-  
-  // Chuyển đổi public key nếu cần
-  let pubkeyToUse = publicKey;
-  if (shouldFlipPublicKey) {
-    // Tạo public key mới với byte đầu tiên bị đảo
-    pubkeyToUse = Buffer.from(publicKey);
-    pubkeyToUse[0] = pubkeyToUse[0] === 0x02 ? 0x03 : 0x02;
-  }
-  
-  // Các hằng số
-  const COMPRESSED_PUBKEY_SIZE = 33;
-  const SIGNATURE_SIZE = 64;
-  const DATA_START = 16; // 1 byte + 1 byte padding + 14 bytes offsets
-  const SIGNATURE_OFFSETS_START = 2;
-  
-  // Tính tổng kích thước dữ liệu
-  const totalSize = DATA_START + SIGNATURE_SIZE + COMPRESSED_PUBKEY_SIZE + message.length;
-  const instructionData = Buffer.alloc(totalSize);
-  
-  // Tính offset
-  const numSignatures = 1;
-  const publicKeyOffset = DATA_START;
-  const signatureOffset = publicKeyOffset + COMPRESSED_PUBKEY_SIZE;
-  const messageDataOffset = signatureOffset + SIGNATURE_SIZE;
-
-  // Ghi số lượng chữ ký và padding
-  instructionData.writeUInt8(numSignatures, 0);
-  instructionData.writeUInt8(0, 1); // padding
-
-  // Tạo và ghi offsets
-  const offsets = {
-    signature_offset: signatureOffset,
-    signature_instruction_index: 0xffff, // u16::MAX
-    public_key_offset: publicKeyOffset,
-    public_key_instruction_index: 0xffff,
-    message_data_offset: messageDataOffset,
-    message_data_size: message.length,
-    message_instruction_index: 0xffff,
-  };
-
-  // Ghi offsets
-  instructionData.writeUInt16LE(offsets.signature_offset, SIGNATURE_OFFSETS_START);
-  instructionData.writeUInt16LE(offsets.signature_instruction_index, SIGNATURE_OFFSETS_START + 2);
-  instructionData.writeUInt16LE(offsets.public_key_offset, SIGNATURE_OFFSETS_START + 4);
-  instructionData.writeUInt16LE(offsets.public_key_instruction_index, SIGNATURE_OFFSETS_START + 6);
-  instructionData.writeUInt16LE(offsets.message_data_offset, SIGNATURE_OFFSETS_START + 8);
-  instructionData.writeUInt16LE(offsets.message_data_size, SIGNATURE_OFFSETS_START + 10);
-  instructionData.writeUInt16LE(offsets.message_instruction_index, SIGNATURE_OFFSETS_START + 12);
-
-  // Ghi dữ liệu vào instruction
-  pubkeyToUse.copy(instructionData, publicKeyOffset);
-  signature.copy(instructionData, signatureOffset);
-  message.copy(instructionData, messageDataOffset);
-  
-  return new TransactionInstruction({
-    keys: [],
-    programId: SECP256R1_PROGRAM_ID,
-    data: instructionData,
-  });
+  return signature;
 }; 
