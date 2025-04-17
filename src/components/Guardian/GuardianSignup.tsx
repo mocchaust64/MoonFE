@@ -10,6 +10,7 @@ import {
   saveGuardianData,
   getInvitation,
   getGuardianData,
+  checkGuardianNameExists,
 } from "@/lib/firebase/guardianService";
 import { saveWebAuthnCredentialMapping } from "@/lib/firebase/webAuthnService";
 import { GuardianData } from "@/types/guardian";
@@ -28,11 +29,14 @@ export function GuardianSignup({
 }: GuardianSignupProps) {
   const router = useRouter();
   const [recoveryPhrase, setRecoveryPhrase] = useState("");
+  const [guardianName, setGuardianName] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [guardianId, setGuardianId] = useState<number | null>(null);
   const [isRegistrationSuccess, setIsRegistrationSuccess] = useState(false);
   const [walletName, setWalletName] = useState<string>("");
+  const [isCheckingName, setIsCheckingName] = useState(false);
+  const [nameError, setNameError] = useState("");
 
   const checkGuardianStatus = useCallback(async () => {
     try {
@@ -77,6 +81,24 @@ export function GuardianSignup({
     return () => clearInterval(interval);
   }, [isRegistrationSuccess, inviteCode, checkGuardianStatus]);
 
+  const checkDuplicateName = async (name: string) => {
+    if (!name) return;
+    
+    setIsCheckingName(true);
+    setNameError("");
+    
+    try {
+      const exists = await checkGuardianNameExists(name);
+      if (exists) {
+        setNameError("Tên guardian này đã tồn tại. Vui lòng chọn tên khác.");
+      }
+    } catch (error) {
+      console.error("Lỗi khi kiểm tra tên:", error);
+    } finally {
+      setIsCheckingName(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -91,24 +113,30 @@ export function GuardianSignup({
         throw new Error("Please enter recovery phrase");
       }
 
-      // 1. Create WebAuthn credential
+      if (!guardianName) {
+        throw new Error("Vui lòng nhập tên Guardian");
+      }
+
+      const exists = await checkGuardianNameExists(guardianName);
+      if (exists) {
+        setNameError("Tên guardian này đã tồn tại. Vui lòng chọn tên khác.");
+        setIsLoading(false);
+        return;
+      }
+
       const webAuthnResult = await createWebAuthnCredential(walletName);
 
-      // 2. Hash recovery phrase
       const hashedRecoveryBytes = await hashRecoveryPhrase(recoveryPhrase);
 
-      // 3. Compress WebAuthn public key
       const compressedKey = compressPublicKey(
         Buffer.from(webAuthnResult.publicKey, "hex"),
       );
 
-      // 4. Get invitation data
       const invitation = await getInvitation(inviteCode);
       if (!invitation) {
         throw new Error("Invitation not found");
       }
 
-      // 5. Save guardian data
       const guardianData: GuardianData = {
         inviteCode,
         guardianId,
@@ -118,29 +146,25 @@ export function GuardianSignup({
         webauthnPublicKey: Array.from(compressedKey),
         status: "ready",
         createdAt: new Date(),
-        guardianName: walletName,
+        guardianName: guardianName,
         isOwner: true
       };
 
       await saveGuardianData(guardianData);
 
-      // 6. Save WebAuthn mapping
       await saveWebAuthnCredentialMapping(
         webAuthnResult.credentialId,
         invitation.multisigPDA,
         Array.from(compressedKey),
         invitation.guardianId,
-        walletName,
+        guardianName,
         invitation.threshold,
         true
       );
 
-      // Lưu thông tin credential và guardianId vào localStorage
-      // để sử dụng khi đăng nhập và ký đề xuất
       localStorage.setItem('current_credential_id', webAuthnResult.credentialId);
       localStorage.setItem('current_guardian_id', invitation.guardianId.toString());
       
-      // Lưu thông tin credential mapping vào localStorage giống như khi tạo ví
       localStorage.setItem(
         "webauthn_credential_" + webAuthnResult.credentialId,
         JSON.stringify({
@@ -177,6 +201,29 @@ export function GuardianSignup({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium">
+              Tên Guardian
+            </label>
+            <Input
+              value={guardianName}
+              onChange={(e) => {
+                setGuardianName(e.target.value);
+                setNameError("");
+              }}
+              onBlur={() => checkDuplicateName(guardianName)}
+              disabled={isRegistrationSuccess}
+              placeholder="Nhập tên guardian của bạn"
+              required
+            />
+            {nameError && (
+              <p className="mt-1 text-sm text-red-500">{nameError}</p>
+            )}
+            {isCheckingName && (
+              <p className="mt-1 text-sm text-blue-500">Đang kiểm tra tên...</p>
+            )}
+          </div>
+          
+          <div>
+            <label className="mb-1 block text-sm font-medium">
               Recovery Phrase
             </label>
             <Input
@@ -203,7 +250,7 @@ export function GuardianSignup({
 
           <Button
             type="submit"
-            disabled={isLoading || !guardianId || isRegistrationSuccess}
+            disabled={isLoading || !guardianId || isRegistrationSuccess || nameError !== ""}
             className="w-full"
           >
             {isLoading

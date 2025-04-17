@@ -9,6 +9,7 @@ import {
   deleteDoc,
   serverTimestamp,
   updateDoc,
+  limit,
 } from "firebase/firestore";
 
 import { GuardianData, InviteData } from "@/types/guardian";
@@ -366,3 +367,97 @@ export async function createGuardianInvitation(
     throw error;
   }
 }
+
+// Lấy danh sách các guardian ID đang ở trạng thái pending cho một multisig wallet
+export const getPendingGuardianIds = async (
+  multisigPDA: string
+): Promise<number[]> => {
+  try {
+    console.log(`Đang tìm các guardian ID đang chờ xác nhận cho ví ${multisigPDA}`);
+
+    // Tìm trong collection invitations
+    const invitesQuery = query(
+      collection(db, "invitations"),
+      where("multisigPDA", "==", multisigPDA)
+    );
+
+    const querySnapshot = await getDocs(invitesQuery);
+    const pendingIds: number[] = [];
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      // Thêm guardianId vào danh sách nếu có
+      if (data.guardianId !== undefined) {
+        pendingIds.push(Number(data.guardianId));
+      }
+    });
+
+    console.log(`Tìm thấy ${pendingIds.length} guardian ID đang chờ xác nhận: ${pendingIds.join(', ')}`);
+    return pendingIds;
+  } catch (error) {
+    console.error("Lỗi khi lấy danh sách guardian ID đang chờ xác nhận:", error);
+    return [];
+  }
+};
+
+/**
+ * Kiểm tra xem tên guardian đã tồn tại chưa
+ * @param guardianName Tên guardian cần kiểm tra
+ * @returns true nếu tên đã tồn tại, false nếu chưa
+ */
+export const checkGuardianNameExists = async (guardianName: string): Promise<boolean> => {
+  try {
+    if (!guardianName) return false;
+    
+    const q = query(
+      collection(db, "guardians"),
+      where("guardianName", "==", guardianName),
+      limit(1)
+    );
+    
+    const querySnapshot = await getDocs(q);
+    return !querySnapshot.empty;
+  } catch (error) {
+    console.error("Lỗi khi kiểm tra tên guardian:", error);
+    throw error;
+  }
+};
+
+/**
+ * Tìm kiếm guardians theo tên
+ * @param username Tên guardian cần tìm
+ * @returns Danh sách guardians có tên phù hợp
+ */
+export const searchGuardiansByUsername = async (
+  username: string
+): Promise<any[]> => {
+  try {
+    // Tạo giá trị username để tìm kiếm
+    const searchName = username.toLowerCase().trim();
+    
+    // Firebase không hỗ trợ tìm kiếm không phân biệt chữ hoa/thường
+    // nên ta cần lấy tất cả rồi lọc phía client
+    const guardiansRef = collection(db, "guardians");
+    const querySnapshot = await getDocs(guardiansRef);
+    
+    const guardians: any[] = [];
+    
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      const guardianName = data.guardianName?.toLowerCase() || '';
+      
+      // Kiểm tra nếu tên guardian chứa chuỗi tìm kiếm
+      if (guardianName.includes(searchName)) {
+        guardians.push({
+          id: doc.id,
+          ...data
+        });
+      }
+    });
+    
+    return guardians;
+  } catch (error) {
+    console.error("Lỗi khi tìm kiếm guardians:", error);
+    throw error;
+  }
+};

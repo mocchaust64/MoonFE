@@ -531,9 +531,9 @@ export function TransactionsContent() {
         
         // Tạo explorer URL
         const explorerLink = process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta'
-          ? `https://explorer.solana.com/tx/${signature}`
+          ? `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`
           : process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet'
-            ? `https://explorer.solana.com/tx/${signature}?cluster=devnet` 
+            ? `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899` 
             : `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`;
           
         toast.success(

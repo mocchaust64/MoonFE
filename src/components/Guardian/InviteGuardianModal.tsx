@@ -50,16 +50,41 @@ export function InviteGuardianModal({
 
     // Convert string to PublicKey object
     const multisigPublicKey = new PublicKey(multisigPDA);
-
+    
+    // Tạo set để lưu các ID đã được sử dụng (từ blockchain và Firebase)
+    const usedIds = new Set<number>();
+    
+    // 1. Kiểm tra từ blockchain
     for (let i = 1; i <= 8; i++) {
       const guardianPDA = getGuardianPDA(multisigPublicKey, i);
       const guardianAccount = await connection.getAccountInfo(guardianPDA);
-      if (!guardianAccount) {
+      if (guardianAccount) {
+        usedIds.add(i);
+      }
+    }
+    
+    // 2. Kiểm tra từ Firebase - các guardian đang trong trạng thái "pending"
+    try {
+      const { getPendingGuardianIds } = await import("@/lib/firebase/guardianService");
+      const pendingGuardianIds = await getPendingGuardianIds(multisigPDA.toString());
+      
+      // Thêm tất cả pending IDs vào set đã sử dụng
+      pendingGuardianIds.forEach((id: number) => usedIds.add(id));
+      
+      console.log("Guardian IDs đã được sử dụng:", Array.from(usedIds));
+    } catch (error) {
+      console.error("Lỗi khi lấy pending guardian IDs từ Firebase:", error);
+      // Tiếp tục xử lý với các ID đã biết từ blockchain
+    }
+    
+    // 3. Tìm ID nhỏ nhất chưa được sử dụng
+    for (let i = 1; i <= 8; i++) {
+      if (!usedIds.has(i)) {
         return i;
       }
     }
 
-    throw new Error("Maximum number of guardians reached");
+    throw new Error("Đã đạt đến số lượng guardian tối đa (8)");
   };
 
   const generateGuardianInvite = async () => {

@@ -10,6 +10,7 @@ import { connection } from "@/lib/solana";
 import { useWalletStore } from "@/store/walletStore";
 import { getMultisigPDA } from "@/utils/credentialUtils";
 import { getWebAuthnAssertionForLogin } from "@/utils/webauthnUtils";
+import Link from "next/link";
 
 export default function LoginWallet() {
   const router = useRouter();
@@ -97,6 +98,12 @@ export default function LoginWallet() {
         {isLoading ? "Connect Wallet..." : "Connect Wallet"}
       </Button>
       {error && <div className="mt-2 text-sm text-red-500">{error}</div>}
+      
+      <div className="text-center">
+        <Link href="/recover-access" className="text-sm text-blue-500 hover:underline">
+          Mất quyền truy cập? Khôi phục tại đây
+        </Link>
+      </div>
     </div>
   );
 }
