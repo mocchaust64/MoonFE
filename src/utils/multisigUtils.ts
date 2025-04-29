@@ -9,19 +9,53 @@ import {
 } from "@solana/web3.js";
 import { getMultisigPDA } from "@/utils/credentialUtils";
 import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
-import { PROGRAM_ID, connection, program, MoonWalletProgram } from "@/lib/solana/index";
+import { PROGRAM_ID, connection, MoonWalletProgram } from "@/lib/solana/index";
 import { BN } from "@coral-xyz/anchor";
 
 /**
  * Tìm Program Address với seed và programId
  */
-export const findProgramAddress = async (
+export const findProgramAddress = (
   seeds: (Buffer | Uint8Array)[],
   programId: PublicKey
-): Promise<[PublicKey, number]> => {
-  return await PublicKey.findProgramAddress(seeds, programId);
+): [PublicKey, number] => {
+  // Thay thế findProgramAddress bằng findProgramAddressSync để tránh deprecated warning
+  return PublicKey.findProgramAddressSync(seeds, programId);
 };
 
+/**
+ * Phân tích threshold từ dữ liệu account
+ */
+function parseThresholdFromAccountData(accountInfo: any): number | undefined {
+  try {
+    if (accountInfo?.data) {
+      // Cấu trúc data: discriminator (8 bytes) + threshold (1 byte) + ...
+      // Threshold nằm ở byte thứ 8
+      const threshold = accountInfo.data[8];
+      console.log(`Đã phân tích được threshold=${threshold} từ dữ liệu account`);
+      return threshold;
+    }
+  } catch (parseError) {
+    console.error("Lỗi khi phân tích dữ liệu account để lấy threshold:", parseError);
+  }
+  return undefined;
+}
+
+/**
+ * Lấy threshold từ Firebase
+ */
+async function getThresholdFromFirebase(credentialId: string): Promise<number | undefined> {
+  try {
+    const credentialMapping = await getWalletByCredentialId(credentialId);
+    if (credentialMapping?.threshold !== undefined) {
+      console.log(`Đã lấy được threshold=${credentialMapping.threshold} từ Firebase`);
+      return credentialMapping.threshold;
+    }
+  } catch (firebaseError) {
+    console.error("Lỗi khi lấy threshold từ Firebase:", firebaseError);
+  }
+  return undefined;
+}
 
 /**
  * Tìm multisig wallet với credential ID
@@ -53,9 +87,7 @@ export const findMultisigWallet = async (
 
     // Nếu có program, lấy thông tin chi tiết
     if (program) {
-      const multisigAccount = await (
-        program.account as any
-      ).multisigWallet.fetch(multisigPDA);
+      const multisigAccount = await (program.account as any).multisigWallet.fetch(multisigPDA);
 
       callbacks.onProgress?.(`Đã tìm thấy multisig: ${multisigPDA.toString()}`);
       callbacks.onSuccess?.({
@@ -71,87 +103,42 @@ export const findMultisigWallet = async (
         account: multisigAccount,
         address: multisigPDA.toString(),
       };
-    } else {
-      callbacks.onProgress?.(
-        "Tìm thấy multisig nhưng chưa thể tải thông tin chi tiết (program chưa sẵn sàng)"
-      );
+    } 
+    
+    // Trường hợp không có program
+    callbacks.onProgress?.(
+      "Tìm thấy multisig nhưng chưa thể tải thông tin chi tiết (program chưa sẵn sàng)"
+    );
 
-      // Thử lấy thông tin threshold từ Firebase trước
-      try {
-        const credentialMapping = await getWalletByCredentialId(credentialId);
-        if (credentialMapping && credentialMapping.threshold !== undefined) {
-          console.log(
-            `Đã lấy được threshold=${credentialMapping.threshold} từ Firebase`
-          );
-
-          callbacks.onSuccess?.({
-            pubkey: multisigPDA,
-            account: null,
-            address: multisigPDA.toString(),
-            threshold: credentialMapping.threshold,
-          });
-
-          return {
-            pubkey: multisigPDA,
-            account: null,
-            address: multisigPDA.toString(),
-            threshold: credentialMapping.threshold,
-          };
-        }
-      } catch (firebaseError) {
-        console.error("Lỗi khi lấy threshold từ Firebase:", firebaseError);
-      }
-
-      // Nếu không tìm thấy trong Firebase, thử phân tích từ dữ liệu account
-      try {
-        if (accountInfo && accountInfo.data) {
-          // Phân tích dữ liệu account để lấy threshold
-          // Cấu trúc data: discriminator (8 bytes) + threshold (1 byte) + ...
-          // Threshold nằm ở byte thứ 8
-          const threshold = accountInfo.data[8];
-
-          // Log kết quả
-          console.log(
-            `Đã phân tích được threshold=${threshold} từ dữ liệu account`
-          );
-
-          callbacks.onSuccess?.({
-            pubkey: multisigPDA,
-            account: null,
-            address: multisigPDA.toString(),
-            threshold: threshold,
-            guardianCount: null, // Không thể lấy được guardianCount
-          });
-
-          return {
-            pubkey: multisigPDA,
-            account: null,
-            address: multisigPDA.toString(),
-            threshold: threshold,
-          };
-        }
-      } catch (parseError) {
-        console.error(
-          "Lỗi khi phân tích dữ liệu account để lấy threshold:",
-          parseError
-        );
-      }
-
-      // Trường hợp không thể phân tích được threshold
-      callbacks.onSuccess?.({
+    // Thử lấy threshold từ Firebase
+    const thresholdFromFirebase = await getThresholdFromFirebase(credentialId);
+    
+    if (thresholdFromFirebase !== undefined) {
+      const result = {
         pubkey: multisigPDA,
         account: null,
         address: multisigPDA.toString(),
-        threshold: undefined,
-      });
-
-      return {
-        pubkey: multisigPDA,
-        account: null,
-        address: multisigPDA.toString(),
-        threshold: undefined,
+        threshold: thresholdFromFirebase,
       };
+      
+      callbacks.onSuccess?.(result);
+      return result;
     }
+
+    // Nếu không có trong Firebase, thử phân tích từ dữ liệu account
+    const parsedThreshold = parseThresholdFromAccountData(accountInfo);
+    
+    const result = {
+      pubkey: multisigPDA,
+      account: null,
+      address: multisigPDA.toString(),
+      threshold: parsedThreshold,
+      guardianCount: null, // Không thể lấy được guardianCount khi không có program
+    };
+    
+    callbacks.onSuccess?.(result);
+    return result;
+    
   } catch (error) {
     console.error("Lỗi khi tìm multisig:", error);
     callbacks.onError?.(
@@ -205,14 +192,14 @@ export const loadProposals = async (
           const offset = 8 + 32; // bỏ qua discriminator và multisig pubkey
 
           // Đọc proposalId (u64)
-          const proposalId = new BN(dataBuffer.slice(offset, offset + 8), "le");
+          const proposalId = new BN(dataBuffer.subarray(offset, offset + 8), "le");
 
           // Đọc description (string)
           let currentOffset = offset + 8;
           const descriptionLength = dataBuffer.readUInt32LE(currentOffset);
           currentOffset += 4;
           const description = dataBuffer
-            .slice(currentOffset, currentOffset + descriptionLength)
+            .subarray(currentOffset, currentOffset + descriptionLength)
             .toString();
           currentOffset += descriptionLength;
 
@@ -220,7 +207,7 @@ export const loadProposals = async (
           const actionLength = dataBuffer.readUInt32LE(currentOffset);
           currentOffset += 4;
           const action = dataBuffer
-            .slice(currentOffset, currentOffset + actionLength)
+            .subarray(currentOffset, currentOffset + actionLength)
             .toString();
           currentOffset += actionLength;
 
@@ -238,40 +225,42 @@ export const loadProposals = async (
 
           // Đọc createdAt (i64)
           const createdAt = new BN(
-            dataBuffer.slice(currentOffset, currentOffset + 8),
+            dataBuffer.subarray(currentOffset, currentOffset + 8),
             "le"
           );
           currentOffset += 8;
 
           // Đọc proposer (PublicKey)
-          const proposerBytes = dataBuffer.slice(
+          const proposerBytes = dataBuffer.subarray(
             currentOffset,
             currentOffset + 32
           );
-          const proposer = new PublicKey(proposerBytes);
+
+          // ... phần tiếp theo để phân tích dữ liệu chi tiết
 
           return {
-            publicKey: pubkey,
-            id: proposalId.toString(),
+            pubkey,
+            proposalId: proposalId.toNumber(),
             description,
             action,
-            status: ["Pending", "Executed", "Rejected", "Expired"][status],
-            statusCode: status,
+            status,
             signaturesCount,
             requiredSignatures,
-            createdAt: new Date(createdAt.toNumber() * 1000).toLocaleString(),
-            proposer: proposer.toString(),
+            createdAt: createdAt.toNumber(),
+            proposer: new PublicKey(proposerBytes),
+            // ... các trường khác
           };
         } catch (error) {
-          console.error("Lỗi khi phân tích dữ liệu account:", error);
+          console.error(
+            `Lỗi khi phân tích đề xuất ${pubkey.toString()}:`,
+            error
+          );
           return null;
         }
       })
-      .filter(Boolean); // Lọc ra các giá trị null
+      .filter(Boolean); // Lọc bỏ các phần tử null
 
-    callbacks.onProgress?.(`Đã tải ${proposals.length} đề xuất`);
     callbacks.onSuccess?.(proposals);
-
     return proposals;
   } catch (error) {
     console.error("Lỗi khi tải danh sách đề xuất:", error);
@@ -307,10 +296,10 @@ export const createProposal = async (
     const multisigPubkey = new PublicKey(multisigAddress);
 
     // Mặc định guardian ID là 1 (owner)
-    const guardianId = new BN(params.guardianId || 1);
+    const guardianId = new BN(params.guardianId ?? 1);
 
     // Tính PDA cho guardian
-    const [guardianPubkey] = await findProgramAddress(
+    const [guardianPubkey] = findProgramAddress(
       [
         Buffer.from("guardian"),
         multisigPubkey.toBuffer(),
@@ -323,7 +312,7 @@ export const createProposal = async (
     const proposalId = new BN(Date.now());
 
     // Tính toán địa chỉ PDA cho proposal
-    const [proposalPubkey] = await findProgramAddress(
+    const [proposalPubkey] = findProgramAddress(
       [
         Buffer.from("proposal"),
         multisigPubkey.toBuffer(),
@@ -403,7 +392,14 @@ export const createProposal = async (
 
     callbacks.onProgress?.("Đang gửi giao dịch...");
     const signature = await connection.sendRawTransaction(tx.serialize());
-    await connection.confirmTransaction(signature);
+    
+    // Thay thế cách gọi deprecated
+    const latestBlockhash = await connection.getLatestBlockhash();
+    await connection.confirmTransaction({
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      signature
+    });
 
     callbacks.onProgress?.(`Đã tạo đề xuất thành công: ${signature}`);
     callbacks.onSuccess?.(signature);

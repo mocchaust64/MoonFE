@@ -2,7 +2,7 @@
 
 import { Timestamp } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp, UserPlus, Send, Loader2, Key, ArrowUpDown, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, UserPlus,  Loader2, ArrowUpDown, FileText } from "lucide-react";
 import type React from "react";
 import { useState, useEffect,  useRef } from "react";
 import { toast } from "sonner";
@@ -18,20 +18,25 @@ import {
 import { cn } from "@/lib/utils";
 import type { GuardianData } from "@/types/guardian";
 import { useWalletInfo } from "@/hooks/useWalletInfo";
-import { getProposalsByWallet, addSignerToProposal, updateProposalStatus } from "@/lib/firebase/proposalService";
-import { Proposal as BaseProposal } from "@/lib/firebase/proposalService";
+
+import { Proposal as BaseProposal, getProposalsByWallet,updateProposalStatus } from "@/lib/firebase/proposalService";
 import { PublicKey, SystemProgram, Transaction as SolanaTransaction, TransactionInstruction, SYSVAR_CLOCK_PUBKEY, Keypair } from "@solana/web3.js";
-import { sha256 } from "@noble/hashes/sha256";
 import { Buffer } from "buffer";
 import { useWalletStore } from "@/store/walletStore";
-import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
+
 import { PROGRAM_ID } from "@/utils/constants";
 import BN from "bn.js";
-import {getConnection } from "@/utils/connectionUtils";
-import { SYSVAR_INSTRUCTIONS_PUBKEY } from "@/utils/transactionUtils";
+import { getConnection } from "@/utils/connectionUtils";
 import { updateProposalInFirebase } from "@/utils/proposalService";
 import { handleSignProposal as signProposalWithWebAuthn } from "@/utils/proposalSigning";
 
+// Đưa hàm getErrorCodeFromMessage lên trước các hàm sử dụng nó
+// Sửa lỗi S6594 sử dụng RegExp.exec() thay vì match
+const getErrorCodeFromMessage = (message: string): string | undefined => {
+  const errorCodeRegex = /custom program error: (0x[0-9a-fA-F]+)/;
+  const match = errorCodeRegex.exec(message);
+  return match?.[1];
+};
 
 interface TransactionItem {
   id: string;
@@ -89,13 +94,13 @@ const createTransactionItem = (proposal: Proposal): TransactionItem => ({
   status: proposal.status.charAt(0).toUpperCase() + proposal.status.slice(1),
   statusColor: getStatusColor(proposal.status),
   details: {
-    author: proposal.creator || "Unknown",
-    createdOn: formatDate(proposal.createdAt?.toDate?.() || new Date()),
+    author: proposal.creator ?? "Unknown",
+    createdOn: formatDate(proposal.createdAt?.toDate?.() ?? new Date()),
     executedOn: proposal.transactionSignature ? 
-      formatDate(proposal.executedAt?.toDate?.() || new Date()) : 
+      formatDate(proposal.executedAt?.toDate?.() ?? new Date()) : 
       "Pending",
     results: {
-      confirmed: proposal.signers?.length || 0,
+      confirmed: proposal.signers?.length ?? 0,
       rejected: 0,
       threshold: `${proposal.requiredSignatures}/${proposal.requiredSignatures}`
     }
@@ -124,7 +129,6 @@ export function TransactionsContent() {
     null,
   );
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingGuardians, setPendingGuardians] = useState<GuardianData[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -165,64 +169,74 @@ export function TransactionsContent() {
 
     setIsLoading(true);
     try {
-      getPendingInvites(multisigPDA.toString()).then((pendingInvites) => {
-        if (!pendingInvites || pendingInvites.length === 0) {
-          setTransactions(prev => {
-            const nonPendingGuardians = prev.filter(tx => !tx.isPendingGuardian);
-            return nonPendingGuardians;
-          });
-          setIsLoading(false);
-          return;
-        }
-
-        Promise.all(
-          pendingInvites.map(async (inviteCode) => {
-            const guardianData = await getGuardianData(inviteCode);
-            const inviteData = await getInvitation(inviteCode);
-
-            if (!guardianData || !inviteData) return null;
-
-            return {
-              id: inviteCode,
-              type: "Add Guardian",
-              icon: <UserPlus className="h-5 w-5 text-purple-500" />,
-              status: "Ready for execution",
-              statusColor: "text-yellow-500",
-              details: {
-                author: ` ${guardianData.guardianId}`,
-                createdOn:
-                  guardianData.createdAt instanceof Timestamp
-                    ? guardianData.createdAt.toDate().toLocaleString()
-                    : new Date(guardianData.createdAt).toLocaleString(),
-                executedOn: ` ${inviteCode}`,
-                results: {
-                  confirmed: 0,
-                  rejected: 0,
-                  threshold: `${threshold}/${guardianCount}`,
-                },
-              },
-              guardianData,
-              isPendingGuardian: true,
-            };
-          })
-        ).then((guardianTransactions) => {
-          const validTransactions = guardianTransactions.filter(
-            (tx): tx is NonNullable<typeof tx> => tx !== null
-          );
-          
-          setTransactions(prev => {
-            const nonPendingGuardians = prev.filter(tx => !tx.isPendingGuardian);
-            return [...validTransactions, ...nonPendingGuardians];
-          });
-          setIsLoading(false);
-        });
-      });
+      processPendingInvites(multisigPDA.toString());
     } catch (error) {
       console.error("Error loading transactions:", error);
       toast.error("Failed to load transactions");
       setIsLoading(false);
     }
   }
+
+  const processPendingInvites = async (multisigAddress: string) => {
+    try {
+      const pendingInvites = await getPendingInvites(multisigAddress);
+      
+      if (!pendingInvites || pendingInvites.length === 0) {
+        setTransactions(prev => {
+          const nonPendingGuardians = prev.filter(tx => !tx.isPendingGuardian);
+          return nonPendingGuardians;
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const guardianTransactionsPromises = pendingInvites.map(createGuardianTransaction);
+      const guardianTransactions = await Promise.all(guardianTransactionsPromises);
+      
+      const validTransactions = guardianTransactions.filter(
+        (tx): tx is NonNullable<typeof tx> => tx !== null
+      );
+      
+      setTransactions(prev => {
+        const nonPendingGuardians = prev.filter(tx => !tx.isPendingGuardian);
+        return [...validTransactions, ...nonPendingGuardians];
+      });
+    } catch (error) {
+      console.error("Error processing pending invites:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const createGuardianTransaction = async (inviteCode: string) => {
+    const guardianData = await getGuardianData(inviteCode);
+    const inviteData = await getInvitation(inviteCode);
+
+    if (!guardianData || !inviteData) return null;
+
+    return {
+      id: inviteCode,
+      type: "Add Guardian",
+      icon: <UserPlus className="h-5 w-5 text-purple-500" />,
+      status: "Ready for execution",
+      statusColor: "text-yellow-500",
+      details: {
+        author: ` ${guardianData.guardianId}`,
+        createdOn:
+          guardianData.createdAt instanceof Timestamp
+            ? guardianData.createdAt.toDate().toLocaleString()
+            : new Date(guardianData.createdAt).toLocaleString(),
+        executedOn: ` ${inviteCode}`,
+        results: {
+          confirmed: 0,
+          rejected: 0,
+          threshold: `${threshold}/${guardianCount}`,
+        },
+      },
+      guardianData,
+      isPendingGuardian: true,
+    };
+  };
 
   function loadProposalsFromFirebase() {
     if (!multisigPDA) {
@@ -240,57 +254,70 @@ export function TransactionsContent() {
 
     setIsLoading(true);
     try {
-      getProposalsByWallet(new PublicKey(multisigPDA.toString())).then(async (proposalsData) => {
-        console.log("Loaded proposals:", proposalsData);
-        
-        // DEBUG: Hiển thị trạng thái từng proposal 
-        proposalsData.forEach(p => {
-          console.log(`Proposal ${p.proposalId} - Status: "${p.status}" - Signers: ${p.signers?.length || 0}/${p.requiredSignatures}`);
+      getProposalsByWallet(new PublicKey(multisigPDA.toString()))
+        .then(proposalsData => {
+          console.log("Loaded proposals:", proposalsData);
+          return processProposals(proposalsData, new PublicKey(multisigPDA.toString()));
+        })
+        .catch(error => {
+          console.error("Error loading proposals from Firebase:", error);
+          toast.error("Failed to load proposals");
+        })
+        .finally(() => {
+          setIsLoading(false);
         });
-        
-        if (proposalsData && Array.isArray(proposalsData)) {
-          // Tính toán PDA cho mỗi proposal và thêm vào đối tượng
-          const proposalsWithPDA = await Promise.all(proposalsData.map(async (proposal) => {
-            try {
-              const seedBuffer = Buffer.from("proposal");
-              const multisigBuffer = new PublicKey(multisigPDA).toBuffer();
-              const proposalIdBuffer = new BN(proposal.proposalId).toArrayLike(Buffer, "le", 8);
-              
-              const [proposalPubkey] = await PublicKey.findProgramAddress(
-                [seedBuffer, multisigBuffer, proposalIdBuffer],
-                PROGRAM_ID
-              );
-              
-              console.log(`Đã tính PDA cho proposal ${proposal.proposalId}: ${proposalPubkey.toString()}`);
-              return {
-                ...proposal,
-                proposalPubkey: proposalPubkey.toString()
-              };
-            } catch (error) {
-              console.error(`Lỗi khi tính PDA cho proposal ${proposal.proposalId}:`, error);
-              return proposal;
-            }
-          }));
-          
-          setProposals(proposalsWithPDA);
-          
-          const proposalTransactions = proposalsWithPDA.map(proposal => createTransactionItem(proposal));
-          
-          setTransactions(prev => {
-            const pendingGuardians = prev.filter(tx => tx.isPendingGuardian);
-            return [...pendingGuardians, ...proposalTransactions];
-          });
-          
-          setDataLastLoaded(Date.now());
-        }
-      });
     } catch (error) {
-      console.error("Error loading proposals from Firebase:", error);
-      toast.error("Failed to load proposals");
-    } finally {
+      console.error("Error in loadProposalsFromFirebase:", error);
       setIsLoading(false);
     }
   }
+
+  const processProposals = async (proposalsData: BaseProposal[], multisigPDA: PublicKey) => {
+    // DEBUG: Hiển thị trạng thái từng proposal 
+    proposalsData.forEach(p => {
+      console.log(`Proposal ${p.proposalId} - Status: "${p.status}" - Signers: ${p.signers?.length ?? 0}/${p.requiredSignatures}`);
+    });
+    
+    if (!proposalsData || !Array.isArray(proposalsData)) return;
+    
+    // Tính toán PDA cho mỗi proposal và thêm vào đối tượng
+    const proposalsWithPDA = await Promise.all(proposalsData.map(
+      async (proposal) => calculateProposalPDA(proposal, multisigPDA)
+    ));
+    
+    setProposals(proposalsWithPDA);
+    
+    const proposalTransactions = proposalsWithPDA.map(proposal => createTransactionItem(proposal));
+    
+    setTransactions(prev => {
+      const pendingGuardians = prev.filter(tx => tx.isPendingGuardian);
+      return [...pendingGuardians, ...proposalTransactions];
+    });
+    
+    setDataLastLoaded(Date.now());
+  };
+
+  const calculateProposalPDA = async (proposal: BaseProposal, multisigPDA: PublicKey): Promise<Proposal> => {
+    try {
+      const seedBuffer = Buffer.from("proposal");
+      const multisigBuffer = multisigPDA.toBuffer();
+      const proposalIdBuffer = new BN(proposal.proposalId).toArrayLike(Buffer, "le", 8);
+      
+      const [proposalPubkey] = PublicKey.findProgramAddressSync(
+        [seedBuffer, multisigBuffer, proposalIdBuffer],
+        PROGRAM_ID
+      );
+      
+      console.log(`Đã tính PDA cho proposal ${proposal.proposalId}: ${proposalPubkey.toString()}`);
+      return {
+        ...proposal,
+        proposalPubkey: proposalPubkey.toString()
+      };
+    } catch (error) {
+      console.error(`Lỗi khi tính PDA cho proposal ${proposal.proposalId}:`, error);
+      return proposal as Proposal;
+    }
+  };
 
   const handleConfirmGuardian = (guardian: GuardianData) => {
     setSelectedGuardian(guardian);
@@ -304,6 +331,57 @@ export function TransactionsContent() {
     setSelectedGuardian(null);
   };
 
+  const getGuardianId = (currentGuardianId: number | null, multisigPDAString: string): number => {
+    // Thử lấy guardianId từ localStorage
+    const storedGuardianId = localStorage.getItem('current_guardian_id');
+    if (storedGuardianId) {
+      const parsedId = parseInt(storedGuardianId);
+      console.log(`Sử dụng guardianId từ localStorage: ${parsedId}`);
+      return parsedId;
+    }
+    
+    // Nếu đã có guardianId trong state
+    if (currentGuardianId !== null) {
+      return currentGuardianId;
+    }
+    
+    // Thử lấy từ credential ID
+    const storedCredentialId = localStorage.getItem('current_credential_id');
+    if (storedCredentialId) {
+      try {
+        const localStorageKey = "webauthn_credential_" + storedCredentialId;
+        const localMapping = localStorage.getItem(localStorageKey);
+        if (localMapping) {
+          const mappingData = JSON.parse(localMapping);
+          if (mappingData.guardianId && mappingData.walletAddress === multisigPDAString) {
+            // Đảm bảo mappingData.guardianId là số
+            const guardianIdFromMapping = Number(mappingData.guardianId);
+            // Lưu lại guardianId vào localStorage để sử dụng sau này
+            localStorage.setItem('current_guardian_id', String(guardianIdFromMapping));
+            console.log(`Tìm thấy guardianId từ credential mapping: ${guardianIdFromMapping}`);
+            return guardianIdFromMapping;
+          }
+        }
+      } catch (e) {
+        console.error("Lỗi khi tìm guardianId từ credential mapping:", e);
+      }
+    }
+    
+    throw new Error("Không tìm thấy thông tin guardianId. Vui lòng đăng nhập lại.");
+  };
+
+  const createFeePayerKeypair = (): Keypair => {
+    const feePayerSecretStr = process.env.NEXT_PUBLIC_FEE_PAYER_SECRET_KEY as string;
+    if (!feePayerSecretStr) {
+      throw new Error("NEXT_PUBLIC_FEE_PAYER_SECRET_KEY không được cấu hình");
+    }
+    
+    const secretKeyArray = feePayerSecretStr.split(',').map(Number);
+    const secretKey = new Uint8Array(secretKeyArray);
+    
+    return Keypair.fromSecretKey(secretKey);
+  };
+
   const handleSignProposal = async (proposal: Proposal) => {
     try {
       setIsSigning(true);
@@ -314,74 +392,39 @@ export function TransactionsContent() {
         throw new Error("Không tìm thấy MultisigPDA");
       }
       
-      // Lấy guardianId từ localStorage thay vì sử dụng guardianId từ state
-      let currentGuardianId = guardianId;
-      const storedGuardianId = localStorage.getItem('current_guardian_id');
-      
-      if (storedGuardianId) {
-        // Nếu có guardianId trong localStorage, ưu tiên sử dụng nó
-        currentGuardianId = parseInt(storedGuardianId);
-        console.log(`Sử dụng guardianId từ localStorage: ${currentGuardianId}`);
-      } else if (!currentGuardianId) {
-        // Nếu không có guardianId trong state và localStorage, thử lấy từ credential ID
-        const storedCredentialId = localStorage.getItem('current_credential_id');
-        if (storedCredentialId) {
-          try {
-            const localStorageKey = "webauthn_credential_" + storedCredentialId;
-            const localMapping = localStorage.getItem(localStorageKey);
-            if (localMapping) {
-              const mappingData = JSON.parse(localMapping);
-              if (mappingData.guardianId && mappingData.walletAddress === multisigPDA.toString()) {
-                // Đảm bảo mappingData.guardianId là số
-                const guardianIdFromMapping = Number(mappingData.guardianId);
-                currentGuardianId = guardianIdFromMapping;
-                console.log(`Tìm thấy guardianId từ credential mapping: ${guardianIdFromMapping}`);
-                // Lưu lại guardianId vào localStorage để sử dụng sau này
-                localStorage.setItem('current_guardian_id', String(guardianIdFromMapping));
-              }
-            }
-          } catch (e) {
-            console.error("Lỗi khi tìm guardianId từ credential mapping:", e);
-          }
-        }
-      }
-      
-      if (!currentGuardianId) {
-        throw new Error("Không tìm thấy thông tin guardianId. Vui lòng đăng nhập lại.");
-      }
-      
+      // Lấy guardianId từ hàm riêng biệt
+      const currentGuardianId = getGuardianId(guardianId, multisigPDA.toString());
       console.log(`Ký đề xuất với guardianId: ${currentGuardianId}`);
       
       // Tạo keypair từ feePayer secret key
-        let feePayerKeypair;
-          const feePayerSecretStr = process.env.NEXT_PUBLIC_FEE_PAYER_SECRET_KEY as string;
-          if (!feePayerSecretStr) {
-            throw new Error("NEXT_PUBLIC_FEE_PAYER_SECRET_KEY không được cấu hình");
-          }
-          
-          const secretKeyArray = feePayerSecretStr.split(',').map(Number);
-          const secretKey = new Uint8Array(secretKeyArray);
-          
-          feePayerKeypair = Keypair.fromSecretKey(secretKey);
-      
-          const connection = getConnection();
-      
+      const feePayerKeypair = createFeePayerKeypair();
+      const connection = getConnection();
+
       // Gọi hàm ký đề xuất từ proposalSigning.ts
-      const txSignature = await signProposalWithWebAuthn(
+      await signProposalWithWebAuthn(
         connection,
         proposal,
         multisigPDA,
         currentGuardianId,
         feePayerKeypair,
-        credentialId || undefined
+        credentialId ?? undefined
       );
       
       toast.success(`Đề xuất đã được ký thành công!`);
       
-      // Cập nhật danh sách đề xuất sau khi ký thành công
+      // Cập nhật trạng thái đề xuất sau khi ký thành công
       setTimeout(async () => {
         console.log("Đang tải lại danh sách đề xuất sau khi ký...");
         await forceReloadProposals();
+        
+        // Lấy thông tin mới nhất của đề xuất
+        const updatedProposals = await getProposalsByWallet(new PublicKey(multisigPDA.toString()));
+        const updatedProposal = updatedProposals.find(p => p.proposalId === proposal.proposalId);
+        
+        if (updatedProposal) {
+          await updateProposalStatusAfterSigning(updatedProposal);
+        }
+        
         console.log("Đã cập nhật danh sách đề xuất sau khi ký");
         
         // Tải lại lần nữa sau 3 giây để đảm bảo mọi thay đổi đã được cập nhật
@@ -392,7 +435,7 @@ export function TransactionsContent() {
         }, 3000);
       }, 2000); // Tăng thời gian từ 1000ms lên 2000ms
       
-      } catch (error) {
+    } catch (error) {
       console.error("Lỗi khi ký đề xuất:", error);
       toast.error(`Lỗi khi ký đề xuất: ${error instanceof Error ? error.message : 'Lỗi không xác định'}`);
     } finally {
@@ -420,25 +463,20 @@ export function TransactionsContent() {
       console.log("Kiểm tra số lượng chữ ký so với threshold...");
       console.log("Trạng thái đề xuất hiện tại:", proposal.status);
       
-      // Kiểm tra đề xuất đã sẵn sàng thực thi chưa
-      if (proposal.status !== "Ready") {
-        toast.error("Đề xuất chưa sẵn sàng để thực thi. Cần đạt đủ số chữ ký.");
-        return;
-      }
-      
       // Kiểm tra số lượng chữ ký so với threshold
-      const signatureCount = proposal.signers?.length || 0;
-      const requiredSignatures = proposal.requiredSignatures || 0;
+      const signatureCount = proposal.signers?.length ?? 0;
+      const requiredSignatures = proposal.requiredSignatures ?? 0;
       
       console.log(`Số chữ ký hiện tại: ${signatureCount}/${requiredSignatures}`);
       
+      // Sửa lỗi: Kiểm tra dựa trên số lượng chữ ký thực tế chứ không phụ thuộc vào trạng thái 
       if (signatureCount < requiredSignatures) {
         toast.error(`Đề xuất chưa đủ chữ ký (${signatureCount}/${requiredSignatures}). Cần thêm ${requiredSignatures - signatureCount} chữ ký.`);
         return;
       }
       
       // Tính ProposalPDA
-      const [proposalPDA] = await PublicKey.findProgramAddress(
+      const [proposalPDA, _] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("proposal"),
           new PublicKey(multisigPDA.toString()).toBuffer(),
@@ -520,7 +558,11 @@ export function TransactionsContent() {
         
         // Xác nhận giao dịch
         console.log("Đang chờ xác nhận giao dịch...");
-        await connection.confirmTransaction(signature, 'confirmed');
+        await connection.confirmTransaction({
+          signature,
+          lastValidBlockHeight: await connection.getBlockHeight(),
+          blockhash
+        }, 'confirmed');
         
         // Cập nhật trạng thái đề xuất trong Firebase
         console.log("Cập nhật trạng thái đề xuất trong Firebase...");
@@ -530,12 +572,8 @@ export function TransactionsContent() {
         await updateProposalInFirebase(proposal);
         
         // Tạo explorer URL
-        const explorerLink = process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta'
-          ? `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`
-          : process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet'
-            ? `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899` 
-            : `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`;
-          
+        const explorerLink = createExplorerLink(signature);
+        
         toast.success(
           <div>
             Đề xuất đã được thực thi thành công!
@@ -554,7 +592,7 @@ export function TransactionsContent() {
         );
         
         // Refresh danh sách
-        await loadProposalsFromFirebase();
+        loadProposalsFromFirebase();
         console.log("=== KẾT THÚC THỰC THI ĐỀ XUẤT ===");
       } catch (txError) {
         console.error("Lỗi trong quá trình xử lý transaction:", txError);
@@ -572,42 +610,43 @@ export function TransactionsContent() {
       console.error('Lỗi khi thực thi đề xuất:', error);
       
       // Phân tích chi tiết lỗi
-      let errorMessage = 'Lỗi không xác định';
-      
-      if (error instanceof Error) {
-        errorMessage = error.message;
+      let handleBlockchainError = (error: unknown): string => {
+        let errorMessage = 'Lỗi không xác định';
         
-        // Kiểm tra lỗi từ blockchain
-        if (error.message.includes('custom program error')) {
-          // Trích xuất mã lỗi nếu có
-          const errorCodeMatch = error.message.match(/custom program error: (0x[0-9a-fA-F]+)/);
-          if (errorCodeMatch && errorCodeMatch[1]) {
-            const errorCode = errorCodeMatch[1];
+        if (error instanceof Error) {
+          errorMessage = error.message;
+          
+          // Kiểm tra lỗi từ blockchain
+          if (error.message.includes('custom program error')) {
+            // Sử dụng hàm getErrorCodeFromMessage thay vì trực tiếp phân tích regex
+            const errorCode = getErrorCodeFromMessage(error.message);
             
-            // Ánh xạ mã lỗi tới thông báo dễ hiểu
-            switch (errorCode) {
-              case '0x1':
-                errorMessage = 'Khởi tạo không hợp lệ';
-                break;
-              case '0x7':
-                errorMessage = 'Không đủ chữ ký để thực thi đề xuất';
-                break;
-              case '0x2':
-                errorMessage = 'Tham số không hợp lệ';
-                break;
-              case '0x1770': // 0x1770 = 6000
-                errorMessage = 'Lỗi chương trình: Chủ sở hữu không hợp lệ';
-                break;
-              case '0x1771': // 0x1771 = 6001
-                errorMessage = 'Lỗi chương trình: Thao tác không hợp lệ';
-                break;
-              default:
-                errorMessage = `Lỗi chương trình: ${errorCode}`;
+            if (errorCode) {
+              // Ánh xạ mã lỗi tới thông báo dễ hiểu
+              switch (errorCode) {
+                case '0x1':
+                  return 'Khởi tạo không hợp lệ';
+                case '0x7':
+                  return 'Không đủ chữ ký để thực thi đề xuất';
+                case '0x2':
+                  return 'Tham số không hợp lệ';
+                case '0x1770': // 0x1770 = 6000
+                  return 'Lỗi chương trình: Chủ sở hữu không hợp lệ';
+                case '0x1771': // 0x1771 = 6001
+                  return 'Lỗi chương trình: Thao tác không hợp lệ';
+                case '0x177b': // 0x177b = 6011  
+                  return 'Lỗi chương trình: Timestamp thuộc về tương lai';
+                default:
+                  return `Lỗi chương trình: ${errorCode}`;
+              }
             }
           }
         }
-      }
+        
+        return errorMessage;
+      };
       
+      const errorMessage = handleBlockchainError(error);
       toast.error(`Lỗi khi thực thi đề xuất: ${errorMessage}`);
     } finally {
       setIsProcessing(false);
@@ -632,47 +671,7 @@ export function TransactionsContent() {
     
     try {
       const proposalsData = await getProposalsByWallet(new PublicKey(multisigPDA.toString()));
-      console.log("Loaded proposals (force reload):", proposalsData);
-      
-      // DEBUG: Hiển thị trạng thái từng proposal 
-      proposalsData.forEach(p => {
-        console.log(`Proposal ${p.proposalId} - Status: "${p.status}" - Signers: ${p.signers?.length || 0}/${p.requiredSignatures}`);
-      });
-      
-      if (proposalsData && Array.isArray(proposalsData)) {
-        // Tính toán PDA cho mỗi proposal và thêm vào đối tượng
-        const proposalsWithPDA = await Promise.all(proposalsData.map(async (proposal) => {
-          try {
-            const seedBuffer = Buffer.from("proposal");
-            const multisigBuffer = new PublicKey(multisigPDA).toBuffer();
-            const proposalIdBuffer = new BN(proposal.proposalId).toArrayLike(Buffer, "le", 8);
-            
-            const [proposalPubkey] = await PublicKey.findProgramAddress(
-              [seedBuffer, multisigBuffer, proposalIdBuffer],
-              PROGRAM_ID
-            );
-            
-            console.log(`Đã tính PDA cho proposal ${proposal.proposalId}: ${proposalPubkey.toString()}`);
-            return {
-              ...proposal,
-              proposalPubkey: proposalPubkey.toString()
-            };
-          } catch (error) {
-            console.error(`Lỗi khi tính PDA cho proposal ${proposal.proposalId}:`, error);
-            return proposal;
-          }
-        }));
-        
-        setProposals(proposalsWithPDA);
-        
-        const proposalTransactions = proposalsWithPDA.map(proposal => createTransactionItem(proposal));
-        setTransactions(prev => {
-          const pendingGuardians = prev.filter(tx => tx.isPendingGuardian);
-          return [...pendingGuardians, ...proposalTransactions];
-        });
-        
-        setDataLastLoaded(Date.now());
-      }
+      await processProposals(proposalsData, new PublicKey(multisigPDA.toString()));
     } catch (error) {
       console.error("Error loading proposals:", error);
     } finally {
@@ -766,6 +765,58 @@ export function TransactionsContent() {
   const hasCurrentUserSigned = (proposal: Proposal): boolean => {
     if (!guardianPDA || !proposal.signers) return false;
     return proposal.signers.includes(guardianPDA);
+  };
+
+  // Kiểm tra đề xuất đã đạt đủ số chữ ký theo ngưỡng yêu cầu chưa
+  const isReadyToExecute = (proposal: Proposal): boolean => {
+    const signatureCount = proposal.signers?.length ?? 0;
+    const requiredSignatures = proposal.requiredSignatures ?? 0;
+    return signatureCount >= requiredSignatures;
+  };
+
+  // Kiểm tra số chữ ký còn thiếu
+  const getMissingSignatureCount = (proposal: Proposal): number => {
+    const signatureCount = proposal.signers?.length ?? 0;
+    const requiredSignatures = proposal.requiredSignatures ?? 0;
+    return Math.max(0, requiredSignatures - signatureCount);
+  };
+
+  // Sửa phần explorer URL để tránh nested ternary
+  const createExplorerLink = (signature: string): string => {
+    if (process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta') {
+      return `https://explorer.solana.com/tx/${signature}`;
+    } 
+    if (process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet') {
+      return `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
+    }
+    return `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`;
+  };
+
+  // Thêm hàm cập nhật trạng thái đề xuất sau khi ký
+  const updateProposalStatusAfterSigning = async (proposal: Proposal) => {
+    try {
+      if (!proposal) return;
+      
+      const signatureCount = proposal.signers?.length ?? 0;
+      const requiredSignatures = proposal.requiredSignatures ?? 0;
+      
+      // Tự động cập nhật trạng thái nếu đủ chữ ký
+      if (signatureCount >= requiredSignatures && proposal.status === "pending") {
+        console.log("Đề xuất đã đủ chữ ký, cập nhật trạng thái thành Ready");
+        
+        // Sử dụng updateProposalStatus từ lib/firebase/proposalService
+        await updateProposalStatus(
+          proposal.multisigAddress,
+          proposal.proposalId,
+          "Ready"
+        );
+        
+        // Tải lại danh sách đề xuất
+        await forceReloadProposals();
+      }
+    } catch (error) {
+      console.error("Lỗi khi cập nhật trạng thái đề xuất sau khi ký:", error);
+    }
   };
 
   return (
@@ -917,11 +968,7 @@ export function TransactionsContent() {
                                   Signature
                                 </span>
                                 <a
-                                  href={process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta'
-                                    ? `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}`
-                                    : process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet'
-                                      ? `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}?cluster=devnet` 
-                                      : `https://explorer.solana.com/tx/${transaction.proposal.transactionSignature}?cluster=custom&customUrl=http://localhost:8899`}
+                                  href={createExplorerLink(transaction.proposal.transactionSignature)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-blue-500 underline hover:text-blue-700"
@@ -992,44 +1039,51 @@ export function TransactionsContent() {
                           {/* Log debugging info */}
                           {logDebuggingInfo(transaction)}
                           
-                          {/* Nút Ký đề xuất */}
-                          {transaction.status.toLowerCase() === "pending" && (
-                            <div className="mt-4 flex justify-end">
-                              <Button
-                                onClick={() => handleSignProposal(transaction.proposal!)}
-                                disabled={isSigning || (transaction.proposal && hasCurrentUserSigned(transaction.proposal))}
-                                className="transition-transform hover:scale-105"
-                              >
-                                {isSigning && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
-                                  <span className="flex items-center">
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Đang ký...
-                                  </span>
-                                ) : transaction.proposal && hasCurrentUserSigned(transaction.proposal) ? (
-                                  "Đã ký"
-                                ) : (
-                                  "Ký đề xuất"
-                                )}
-                              </Button>
-                            </div>
-                          )}
-
-                          {transaction.proposal && transaction.proposal.status.toLowerCase() === "ready" && (
-                            <div className="mt-4 flex justify-end">
-                              <Button
-                                onClick={() => handleExecuteProposal(transaction.proposal!)}
-                                disabled={isProcessing}
-                                className="transition-transform hover:scale-105 bg-green-600 hover:bg-green-700"
-                              >
-                                {isProcessing && transaction.proposal.proposalId === activeProposalId ? (
-                                  <span className="flex items-center">
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Đang thực thi...
-                                  </span>
-                                ) : (
-                                  "Thực thi"
-                                )}
-                              </Button>
+                          {/* Phần nút hành động cho đề xuất */}
+                          {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
+                            <div className="mt-4 space-y-2">
+                              {/* Hiển thị thông báo khi đã ký nhưng chưa đủ ngưỡng */}
+                              {hasCurrentUserSigned(transaction.proposal) && !isReadyToExecute(transaction.proposal) && (
+                                <div className="text-center text-yellow-500 text-sm mb-2">
+                                  Bạn đã ký đề xuất này. Cần thêm {getMissingSignatureCount(transaction.proposal)} chữ ký để có thể thực thi.
+                                </div>
+                              )}
+                              
+                              {/* Nút Ký đề xuất - Chỉ hiển thị khi chưa ký */}
+                              {!hasCurrentUserSigned(transaction.proposal) && (
+                                <Button
+                                  onClick={() => handleSignProposal(transaction.proposal!)}
+                                  disabled={isSigning || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
+                                  className="transition-transform hover:scale-105 w-full"
+                                >
+                                  {isSigning && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
+                                    <span className="flex items-center justify-center">
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Đang ký...
+                                    </span>
+                                  ) : (
+                                    "Ký đề xuất"
+                                  )}
+                                </Button>
+                              )}
+                              
+                              {/* Nút Thực thi đề xuất - Chỉ hiển thị khi đủ chữ ký */}
+                              {isReadyToExecute(transaction.proposal) && (
+                                <Button
+                                  onClick={() => handleExecuteProposal(transaction.proposal!)}
+                                  disabled={isProcessing || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
+                                  className="transition-transform hover:scale-105 w-full bg-green-600 hover:bg-green-700"
+                                >
+                                  {isProcessing && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
+                                    <span className="flex items-center justify-center">
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Đang thực thi...
+                                    </span>
+                                  ) : (
+                                    "Thực thi đề xuất"
+                                  )}
+                                </Button>
+                              )}
                             </div>
                           )}
                         </div>

@@ -4,18 +4,17 @@ import {
   Transaction,
   SystemProgram,
   LAMPORTS_PER_SOL,
-  sendAndConfirmTransaction,
-  SYSVAR_CLOCK_PUBKEY
+  SYSVAR_CLOCK_PUBKEY,
+  Connection,
+  TransactionInstruction
 } from "@solana/web3.js";
 import { Program, BN } from "@coral-xyz/anchor";
 import {
   findMultisigWallet,
   loadProposals,
 } from "@/utils/multisigUtils";
-import { Connection } from "@solana/web3.js";
 import {
   getWebAuthnAssertion,
-  createWebAuthnVerificationData,
   derToRaw,
 } from "@/utils/webauthnUtils";
 import {
@@ -24,15 +23,16 @@ import {
 import { createActionParams } from "@/types/transaction";
 import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
 import { getGuardianPDA } from "@/utils/credentialUtils";
-import { TransactionInstruction } from "@solana/web3.js";
 import { PROGRAM_ID } from "@/lib/solana/index";
 import { Timestamp } from "firebase/firestore";
 import {
   createProposal,
   addSignerToProposal,
   updateProposalStatus,
+  getProposalById,
 } from "@/lib/firebase/proposalService";
-import { sha256 } from "@noble/hashes/sha256";
+import { createApproveProposalTx } from "@/utils/proposalSigning";
+
 import { useRouter } from 'next/navigation';
 import { useWalletInfo } from "@/hooks/useWalletInfo";
 // Props interface
@@ -41,24 +41,36 @@ interface MultisigPanelProps {
   connection: Connection;
 }
 
+// Thêm interface cho proposal params
+interface ProposalTransactionParams {
+  verificationData: Uint8Array;
+  webAuthnPubKey: Buffer;
+  normalizedSignature: Buffer;
+  proposalId: BN;
+  multisigPDA: PublicKey;
+  guardianId: BN;
+  description: string;
+  destinationPubkey: PublicKey;
+  amountLamports: BN;
+}
+
 export const MultisigPanel: FC<MultisigPanelProps> = ({
   credentialId,
   connection,
 }) => {
-  const [showTransferForm, setShowTransferForm] = useState<boolean>(false);
   const [showMultisigPanel, setShowMultisigPanel] = useState<boolean>(false);
+  const [showProposalForm, setShowProposalForm] = useState<boolean>(false);
   const [status, setStatus] = useState<string>("");
   const [multisigAddress, setMultisigAddress] = useState<PublicKey | null>(
     null
   );
-  const [program, setProgram] = useState<Program | null>(null);
+  const [program] = useState<Program | null>(null);
   const [proposals, setProposals] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [multisigInfo, setMultisigInfo] = useState<any>(null);
-  const [payerKeypair, setPayerKeypair] = useState<any>(null);
+  const [payerKeypair] = useState<any>(null);
 
   // Form state cho tạo đề xuất
-  const [showProposalForm, setShowProposalForm] = useState<boolean>(false);
   const [destinationAddress, setDestinationAddress] = useState<string>("");
   const [amount, setAmount] = useState<string>("0.1");
   const [description, setDescription] = useState<string>("Chuyển SOL");
@@ -66,6 +78,11 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
   const [isUsingFirebase] = useState<boolean>(true);
   const {threshold} = useWalletInfo();
   const router = useRouter();
+
+  // Thêm hàm để chuyển đổi trạng thái hiển thị form tạo đề xuất
+  const toggleProposalForm = () => {
+    setShowProposalForm(prev => !prev);
+  };
 
   // Khởi tạo
   useEffect(() => {
@@ -147,9 +164,6 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
           // Hiển thị form multisig khi tìm thấy ví
           setShowMultisigPanel(true);
 
-          // Mặc định hiển thị form chuyển tiền khi tìm thấy ví
-          setShowTransferForm(true);
-
           // Nếu tìm thấy, tải danh sách đề xuất
           if (data.pubkey && prog) {
             loadMultisigProposals(data.pubkey, prog);
@@ -203,283 +217,159 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
     }
   };
 
-  // Tạo đề xuất giao dịch
-  const handleCreateProposal = async () => {
-    try {
-      setIsLoading(true);
-      setStatus("Đang tạo đề xuất giao dịch...");
-
-      // Kiểm tra đầu vào
-      if (!destinationAddress) {
-        throw new Error("Vui lòng nhập địa chỉ đích");
-      }
-
-      if (!amount || parseFloat(amount) <= 0) {
-        throw new Error("Vui lòng nhập số lượng SOL hợp lệ");
-      }
-
-      if (!multisigAddress || !payerKeypair) {
-        throw new Error(
-          "Vui lòng đảm bảo ví đa chữ ký và keypair đã được khởi tạo"
-        );
-      }
-
-      setStatus((prev) => `${prev}\nĐang yêu cầu xác thực WebAuthn...`);
-
-      // LẤY WEBAUTHN PUBLIC KEY THẬT TỪ FIREBASE
+  // Hàm helper để lấy WebAuthn public key từ Firebase hoặc localStorage
+  const getWebAuthnPublicKey = async (credentialIdHex: string): Promise<Buffer> => {
       console.log("Lấy WebAuthn public key...");
-      let webAuthnPubKey: Buffer;
-
-      // Chuyển đổi credentialId từ Uint8Array sang string hex
-      const credentialIdHex = Buffer.from(credentialId).toString("hex");
-      console.log("CredentialId hex:", credentialIdHex);
 
       // Thử tìm trong Firebase
       const credentialMapping = await getWalletByCredentialId(credentialIdHex);
 
-      if (
-        !credentialMapping ||
-        !credentialMapping.guardianPublicKey ||
-        credentialMapping.guardianPublicKey.length === 0
-      ) {
+    if (!credentialMapping?.guardianPublicKey?.length) {
         // Thử tìm trong localStorage
-        console.log(
-          "Không tìm thấy trong Firebase, thử tìm trong localStorage..."
-        );
+      console.log("Không tìm thấy trong Firebase, thử tìm trong localStorage...");
         const localStorageData = localStorage.getItem(
           "webauthn_credential_" + credentialIdHex
         );
+      
         if (localStorageData) {
           const localMapping = JSON.parse(localStorageData);
-          if (
-            localMapping &&
-            localMapping.guardianPublicKey &&
-            localMapping.guardianPublicKey.length > 0
-          ) {
-            webAuthnPubKey = Buffer.from(
-              new Uint8Array(localMapping.guardianPublicKey)
-            );
-          } else {
-            throw new Error(
-              "Không tìm thấy WebAuthn public key trong localStorage"
-            );
-          }
-        } else {
+        if (localMapping?.guardianPublicKey?.length) {
+          return Buffer.from(new Uint8Array(localMapping.guardianPublicKey));
+        }
+      }
+      
           throw new Error("Không tìm thấy WebAuthn public key");
         }
-      } else {
+    
         // Sử dụng WebAuthn public key từ Firebase
-        webAuthnPubKey = Buffer.from(
-          new Uint8Array(credentialMapping.guardianPublicKey)
-        );
-      }
+    return Buffer.from(new Uint8Array(credentialMapping.guardianPublicKey));
+  };
 
-      console.log(
-        "Đã lấy được WebAuthn public key thật:",
-        webAuthnPubKey.toString("hex")
-      );
+  // Hàm helper để tạo verification data từ WebAuthn assertion
+  const createVerificationDataFromAssertion = async (assertion: any) => {
+    // Tính hash của clientDataJSON
+    const clientDataHash = await crypto.subtle.digest(
+      "SHA-256",
+      assertion.clientDataJSON
+    );
+    const clientDataHashBytes = new Uint8Array(clientDataHash);
+    
+    // Tạo verification data: authenticatorData + hash(clientDataJSON)
+    const verificationData = new Uint8Array(
+      assertion.authenticatorData.length + clientDataHashBytes.length
+    );
+    verificationData.set(new Uint8Array(assertion.authenticatorData), 0);
+    verificationData.set(
+      clientDataHashBytes,
+      assertion.authenticatorData.length
+    );
+    
+    return verificationData;
+  };
 
-      // 1. Lấy xác thực WebAuthn - đảm bảo hoạt động đúng với chữ ký
-      const credentialIdString = Buffer.from(credentialId).toString("hex");
-      console.log("Yêu cầu chữ ký với credential ID:", credentialIdString);
-
+  // Hàm xử lý WebAuthn assertion và tạo chữ ký
+  const processWebAuthnAssertion = async (
+    credentialIdString: string,
+    webAuthnPubKey: Buffer
+  ): Promise<{
+    verificationData: Uint8Array;
+    normalizedSignature: Buffer;
+  }> => {
+    // 1. Lấy xác thực WebAuthn
       const assertion = await getWebAuthnAssertion(
         credentialIdString,
         undefined,
         true
       );
+    
       if (!assertion) {
         throw new Error("Không thể lấy WebAuthn assertion");
       }
 
-      console.log("Đã nhận WebAuthn assertion:", assertion);
       setStatus((prev) => `${prev}\nĐã lấy xác thực WebAuthn thành công.`);
 
-      try {
-        // 2. Chuẩn bị message và tạo instruction secp256r1
-        const timestamp = Math.floor(Date.now() / 1000);
-        const amountStr = parseFloat(amount).toString();
-
-        // Tính hash của webAuthnPubKey
-        console.log("===== DEBUG HASH CALCULATION =====");
-        console.log(
-          "Hash Function Input (exact param):",
-          webAuthnPubKey.toString("hex")
-        );
-        console.log(
-          "Hash Function Input Type:",
-          webAuthnPubKey.constructor.name
-        );
-        console.log("Hash Function Input Bytes:", Array.from(webAuthnPubKey));
-
-        // Tính hash sử dụng sha256 giống contract
-        const hashBytes = sha256(Buffer.from(webAuthnPubKey));
-        const fullHashHex = Buffer.from(hashBytes).toString("hex");
-        console.log("Full SHA-256 Hash (Hex):", fullHashHex);
-
-        // Lấy 6 bytes đầu tiên của hash
-        const hashBytesStart = hashBytes.slice(0, 6);
-
-        // Chuyển đổi sang hex string giống hàm to_hex trong contract
-        const pubkeyHashHex = Array.from(hashBytesStart as Uint8Array)
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-
-        console.log("First 6 bytes of Hash (12 hex chars):", pubkeyHashHex);
-
-        // Thêm debug để kiểm tra từng byte hash
-        console.log(
-          "Hash bytes (first 6):",
-          Array.from(hashBytesStart as Uint8Array)
-        );
-        console.log("Hash hex format with contract matching:");
-        Array.from(hashBytesStart as Uint8Array).forEach((byte, i) => {
-          const hex = byte.toString(16).padStart(2, "0");
-          console.log(`Byte ${i}: ${byte} -> hex: ${hex}`);
-        });
-        console.log("==============================================");
-
-        // Tạo message với đầy đủ thông tin bao gồm pubkey hash
-        const messageString = `create:proposal_transfer_${amountStr}_SOL_to_${destinationAddress},timestamp:${timestamp},pubkey:${pubkeyHashHex}`;
-        
-        console.log("Message đầy đủ để ký:", messageString);
-
-        // Chuyển đổi chữ ký DER sang raw
+    // 2. Chuyển đổi chữ ký DER sang raw và chuẩn hóa
         const signatureRaw = derToRaw(Buffer.from(assertion.signature));
         const signatureBuffer = Buffer.from(signatureRaw);
+    const normalizedSignature = normalizeSignatureToLowS(signatureBuffer);
+    
+    // 3. Tạo verification data
+    const verificationData = await createVerificationDataFromAssertion(assertion);
+    
+    return {
+      verificationData,
+      normalizedSignature
+    };
+  };
 
-        console.log("Signature (raw):", signatureBuffer.toString("hex"));
-        
-        // Thêm log chi tiết về WebAuthn assertion
-        console.log("[DEBUG] WebAuthn Raw Response:");
-        console.log("- clientDataJSON (raw):", new Uint8Array(assertion.clientDataJSON));
-        console.log("- clientDataJSON (text):", new TextDecoder().decode(assertion.clientDataJSON));
-        console.log("- authenticatorData (hex):", Buffer.from(assertion.authenticatorData).toString('hex'));
-        console.log("- signature (hex):", Buffer.from(assertion.signature).toString('hex'));
-
-        // Chuẩn hóa signature về dạng Low-S
-        const normalizedSignature = normalizeSignatureToLowS(
-          signatureBuffer
-        );
-        console.log(
-          "Normalized signature:",
-          normalizedSignature.toString("hex")
-        );
-
-        // Thêm log để debug giá trị publicKeyBytes
-        console.log("KIỂM TRA PUBLIC KEY TRƯỚC KHI TẠO INSTRUCTION:");
-        console.log("webAuthnPubKey:", webAuthnPubKey.toString("hex"));
-        console.log("webAuthnPubKey length:", webAuthnPubKey.length);
-
-        // Chuẩn bị dữ liệu xác thực WebAuthn đúng cách
-        console.log("Tạo verification data WebAuthn...");
-        const verificationData = await createWebAuthnVerificationData(
-          assertion
-        );
-
-        console.log("[DEBUG] Verification Data:");
-        console.log("- verificationData (hex):", Buffer.from(verificationData).toString("hex"));
-        console.log("- verificationData (length):", verificationData.length);
-        console.log("- authDataBytes (length):", assertion.authenticatorData.length);
-        console.log("- clientDataHashBytes (length):", 32); // SHA-256 hash luôn là 32 bytes
-
-        // 4. Tạo secp256r1 instruction - sử dụng verificationData thay vì message
+  // Hàm tạo transaction cho đề xuất
+  const buildTransactionForProposal = async (
+    params: ProposalTransactionParams
+  ): Promise<Transaction> => {
+    // 1. Tạo secp256r1 instruction
         const secp256r1Instruction = createSecp256r1Instruction(
-          Buffer.from(verificationData), // Sử dụng verificationData thay vì message
-          webAuthnPubKey,
-          normalizedSignature,
+      Buffer.from(params.verificationData),
+      params.webAuthnPubKey,
+      params.normalizedSignature,
           false
         );
 
-        // 5. Thay thế phần gọi hàm createProposal với trực tiếp tạo và gửi transaction
-        setStatus(
-          (prev) => `${prev}\nĐang tạo transaction với secp256r1 instruction...`
-        );
+    // 2. Tính PDA cho guardian
+    const guardianPubkey = getGuardianPDA(
+      params.multisigPDA,
+      params.guardianId.toNumber()
+    );
 
-        try {
-          // Tạo proposal ID dựa trên timestamp hiện tại
-          const proposalId = new BN(Date.now());
-
-          // Chuyển đổi guardianId
-          const guardianId = new BN(1); // Mặc định là 1 (owner)
-
-          // Đảm bảo multisigAddress là đối tượng PublicKey hợp lệ
-          const multisigPDAObj = new PublicKey(multisigAddress.toString());
-          console.log(
-            "MultisigPDA được chuyển đổi:",
-            multisigPDAObj.toString()
-          );
-
-          // Tính PDA cho guardian
-          const guardianPubkey = await getGuardianPDA(
-            multisigPDAObj,
-            guardianId.toNumber()
-          );
-
-          // Tính PDA cho proposal
-          const [proposalPubkey] = await PublicKey.findProgramAddressSync(
+    // 3. Tính PDA cho proposal
+    const [proposalPubkey] = PublicKey.findProgramAddressSync(
             [
               Buffer.from("proposal"),
-              multisigPDAObj.toBuffer(),
-              proposalId.toArrayLike(Buffer, "le", 8),
+        params.multisigPDA.toBuffer(),
+        params.proposalId.toArrayLike(Buffer, "le", 8),
             ],
             PROGRAM_ID
           );
 
-          // Tạo tham số cho đề xuất
-          const destinationPubkey = new PublicKey(destinationAddress);
-          const amountLamports = new BN(parseFloat(amount) * LAMPORTS_PER_SOL);
-
-          // Sử dụng hàm createActionParams để tạo ActionParams theo định dạng chuẩn
+    // 4. Tạo ActionParams
           const actionParams = createActionParams(
-            amountLamports,
-            destinationPubkey,
-            undefined // Sử dụng undefined thay vì null
+      params.amountLamports,
+      params.destinationPubkey
           );
 
-          console.log("ActionParams:", actionParams);
-
-          // Tạo transaction mới và thêm secp256r1 instruction trước tiên
+    // 5. Tạo transaction mới và thêm secp256r1 instruction
           const transaction = new Transaction();
           transaction.add(secp256r1Instruction);
 
-          // Sử dụng discriminator từ IDL
+    // 6. Tạo instruction cho create_proposal
           const createProposalDiscriminator = new Uint8Array([
             132, 116, 68, 174, 216, 160, 198, 22,
           ]);
 
-          console.log(
-            "Đang sử dụng discriminator từ IDL:",
-            Buffer.from(createProposalDiscriminator).toString("hex")
-          );
-
-          // Tạo và encode dữ liệu theo định dạng Anchor
-
-          // 1. Discriminator (8 bytes)
+    // 7. Tạo và encode dữ liệu theo định dạng Anchor
           const parts = [Buffer.from(createProposalDiscriminator)];
 
-          // 2. proposal_id (u64 - 8 bytes)
-          parts.push(Buffer.from(proposalId.toArrayLike(Buffer, "le", 8)));
+    // 7.1. proposal_id (u64 - 8 bytes)
+    parts.push(Buffer.from(params.proposalId.toArrayLike(Buffer, "le", 8)));
 
-          // 3. description (string - 4 byte độ dài + nội dung)
-          const descriptionBuffer = Buffer.from(description);
+    // 7.2. description (string - 4 byte độ dài + nội dung)
+    const descriptionBuffer = Buffer.from(params.description);
           const descriptionLenBuffer = Buffer.alloc(4);
           descriptionLenBuffer.writeUInt32LE(descriptionBuffer.length, 0);
           parts.push(descriptionLenBuffer);
           parts.push(descriptionBuffer);
 
-          // 4. proposer_guardian_id (u64 - 8 bytes)
-          parts.push(Buffer.from(guardianId.toArrayLike(Buffer, "le", 8)));
+    // 7.3. proposer_guardian_id (u64 - 8 bytes)
+    parts.push(Buffer.from(params.guardianId.toArrayLike(Buffer, "le", 8)));
 
-          // 5. action (string - 4 byte độ dài + nội dung)
+    // 7.4. action (string - 4 byte độ dài + nội dung)
           const actionBuffer = Buffer.from("transfer");
           const actionLenBuffer = Buffer.alloc(4);
           actionLenBuffer.writeUInt32LE(actionBuffer.length, 0);
           parts.push(actionLenBuffer);
           parts.push(actionBuffer);
 
-          // 6. params (ActionParams)
-          // 6.1. amount (option<u64>)
+    // 7.5. params (ActionParams)
+    // 7.5.1. amount (option<u64>)
           if (actionParams.amount) {
             parts.push(Buffer.from([1])); // Some variant
             parts.push(
@@ -489,7 +379,7 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
             parts.push(Buffer.from([0])); // None variant
           }
 
-          // 6.2. destination (option<publicKey>)
+    // 7.5.2. destination (option<publicKey>)
           if (actionParams.destination) {
             parts.push(Buffer.from([1])); // Some variant
             parts.push(Buffer.from(actionParams.destination.toBuffer()));
@@ -497,7 +387,7 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
             parts.push(Buffer.from([0])); // None variant
           }
 
-          // 6.3. tokenMint (option<publicKey>)
+    // 7.5.3. tokenMint (option<publicKey>)
           if (actionParams.tokenMint) {
             parts.push(Buffer.from([1])); // Some variant
             parts.push(Buffer.from(actionParams.tokenMint.toBuffer()));
@@ -505,20 +395,14 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
             parts.push(Buffer.from([0])); // None variant
           }
 
-          // Nối tất cả các phần lại để tạo thành data instruction hoàn chỉnh
+    // 8. Nối tất cả các phần lại để tạo thành data instruction hoàn chỉnh
           const data = Buffer.concat(parts);
 
-          console.log("Instruction data length:", data.length);
-          console.log(
-            "Instruction data (first 32 bytes):",
-            Buffer.from(data.slice(0, 32)).toString("hex")
-          );
-
-          // Thêm instruction vào transaction
+    // 9. Thêm instruction vào transaction
           transaction.add(
             new TransactionInstruction({
               keys: [
-                { pubkey: multisigPDAObj, isSigner: false, isWritable: true },
+          { pubkey: params.multisigPDA, isSigner: false, isWritable: true },
                 { pubkey: proposalPubkey, isSigner: false, isWritable: true },
                 { pubkey: guardianPubkey, isSigner: false, isWritable: false }, // proposer_guardian
                 {
@@ -542,43 +426,19 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
             })
           );
 
-          // Gửi transaction
-          transaction.feePayer = payerKeypair.publicKey;
-          transaction.recentBlockhash = (
-            await connection.getLatestBlockhash()
-          ).blockhash;
-          transaction.sign(payerKeypair);
+    return transaction;
+  };
 
-          setStatus(
-            (prev) => `${prev}\nĐang gửi giao dịch với 2 instructions...`
-          );
-          console.log("Gửi transaction với 2 instructions:", transaction);
-
-          // Kiểm tra instruction bytes
-          console.log("Kiểm tra instruction 0 (secp256r1):", {
-            programId: transaction.instructions[0].programId.toString(),
-            pubkeyInData: webAuthnPubKey.toString("hex"),
-            dataSize: transaction.instructions[0].data.length,
-          });
-
-          // Bắt đầu thêm xử lý lỗi SendTransactionError tốt hơn
-          try {
-            // Gửi transaction với opion skipPreflight: false để bắt lỗi sớm
-            const signature = await connection.sendTransaction(
-              transaction,
-              [payerKeypair],
-              {
-                skipPreflight: false,
-                preflightCommitment: "confirmed",
-                maxRetries: 3,
-              }
-            );
-
-            // Thêm xử lý gói confirmTransaction vào try/catch riêng để bắt lỗi trong quá trình xác nhận
-            try {
-              await connection.confirmTransaction(signature, "confirmed");
-
-              // Tạo đối tượng proposal để lưu vào Firebase
+  // Hàm lưu đề xuất vào Firebase
+  const saveProposalToFirebase = async (
+    proposalId: BN,
+    multisigPDAObj: PublicKey,
+    description: string,
+    amountLamports: BN,
+    destinationPubkey: PublicKey,
+    transactionSignature: string,
+    threshold: number
+  ): Promise<void> => {
               const proposalData = {
                 proposalId: proposalId.toNumber(),
                 multisigAddress: multisigPDAObj.toString(),
@@ -588,11 +448,11 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
                 createdAt: Timestamp.now(),
                 creator: payerKeypair.publicKey.toString(),
                 signers: [], // Không tự động coi người tạo đã ký, để họ ký riêng như các guardian khác
-                requiredSignatures: threshold, // Chỉ lấy số threshold từ useWalletInfo
+      requiredSignatures: threshold,
                 amount: amountLamports.toNumber(),
                 destination: destinationPubkey.toString(),
                 tokenMint: null,
-                transactionSignature: signature,
+      transactionSignature: transactionSignature,
               };
 
               console.log("Lưu proposal vào Firebase:", proposalData);
@@ -612,160 +472,139 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
                 // Không throw error ở đây vì transaction đã thành công
                 // Chỉ log lỗi để debug
               }
+  };
 
-              setStatus(`Đã tạo đề xuất thành công! Signature: ${signature}`);
-              setShowProposalForm(false);
+  // Hàm xử lý lỗi giao dịch
+  const handleTransactionError = (error: unknown): string => {
+    console.error("Lỗi khi xác nhận giao dịch:", error);
 
-              // Tải lại danh sách đề xuất
-              if (program && multisigInfo?.pubkey) {
-                setTimeout(() => {
-                  loadMultisigProposals(multisigInfo.pubkey, program);
-                }, 2000);
-              }
-            } catch (confirmError) {
-              console.error("Lỗi khi xác nhận giao dịch:", confirmError);
-
-              // Kiểm tra xem lỗi có thuộc về loại SendTransactionError không
-              if (confirmError instanceof Error) {
-                const errorMessage = confirmError.message;
-                // Lấy logs từ kết quả simulation nếu có
+    // Xử lý lỗi
+    if (error instanceof Error) {
+      const errorMessage = error.message;
                 let logs: string[] = [];
 
                 // @ts-ignore - Truy cập thuộc tính logs nếu có
-                if (confirmError.logs) {
+      if (error.logs) {
                   // @ts-ignore
-                  logs = confirmError.logs;
+        logs = error.logs;
                 }
 
-                // In ra logs để debug
                 console.error("Transaction logs:", logs);
 
                 // Phân tích thông tin lỗi để hiển thị thông báo cụ thể
-                let errorDetail = "Lỗi không xác định";
-
                 if (errorMessage.includes("custom program error: 0x2")) {
-                  errorDetail =
-                    "Lỗi tham số không hợp lệ (custom program error: 0x2). Có thể do:";
-                  errorDetail += "\n- Sai địa chỉ đích";
-                  errorDetail += "\n- Sai số lượng SOL";
-                  errorDetail += "\n- Guardian không có quyền tạo đề xuất";
+        return "Lỗi tham số không hợp lệ (custom program error: 0x2). Có thể do:\n- Sai địa chỉ đích\n- Sai số lượng SOL\n- Guardian không có quyền tạo đề xuất";
                 } else if (errorMessage.includes("custom program error: 0x1")) {
-                  errorDetail = "Lỗi khởi tạo sai (custom program error: 0x1)";
+        return "Lỗi khởi tạo sai (custom program error: 0x1)";
                 } else if (errorMessage.includes("custom program error: 0x3")) {
-                  errorDetail =
-                    "Lỗi đề xuất đã tồn tại (custom program error: 0x3)";
+        return "Lỗi đề xuất đã tồn tại (custom program error: 0x3)";
                 } else {
-                  errorDetail = `Lỗi: ${errorMessage}`;
+        return `Lỗi: ${errorMessage}`;
                 }
-
-                setStatus(`Giao dịch thất bại: ${errorDetail}`);
               } else {
-                setStatus(`Giao dịch thất bại với lỗi không xác định`);
-              }
-            }
-          } catch (sendError: any) {
-            // Xử lý lỗi khi gửi giao dịch
-            console.error("Lỗi khi gửi giao dịch:", sendError);
+      return "Giao dịch thất bại với lỗi không xác định";
+    }
+  };
 
-            // Lấy logs từ kết quả simulation nếu có
-            let logs: string[] = [];
-            if (sendError.logs) {
-              logs = sendError.logs;
-              console.error("Logs đầy đủ từ blockchain:", logs);
-            }
+  // Tạo đề xuất giao dịch
+  const handleCreateProposal = async () => {
+    try {
+      setIsLoading(true);
+      setStatus("Đang tạo đề xuất giao dịch...");
 
-            // Lấy thông tin chi tiết từ transaction nếu có signature
-            if (sendError.signature) {
-              try {
-                const txInfo = await connection.getTransaction(
-                  sendError.signature,
-                  {
-                    commitment: "confirmed",
-                    maxSupportedTransactionVersion: 0,
-                  }
-                );
-                console.error("Chi tiết giao dịch:", txInfo?.meta?.logMessages);
+      // Kiểm tra đầu vào
+      if (!destinationAddress) {
+        throw new Error("Vui lòng nhập địa chỉ đích");
+      }
 
-                if (txInfo?.meta?.logMessages) {
-                  logs = txInfo.meta.logMessages;
-                }
-              } catch (e) {
-                console.error("Không thể lấy thông tin chi tiết giao dịch:", e);
-              }
-            }
+      if (!amount || parseFloat(amount) <= 0) {
+        throw new Error("Vui lòng nhập số lượng SOL hợp lệ");
+      }
 
-            // In ra logs để debug
-            console.error("Simulation logs:", logs);
-
-            // Phân tích thông tin lỗi để hiển thị thông báo cụ thể
-            let errorDetail = "Lỗi không xác định";
-
-            if (logs.length > 0) {
-              // Hiển thị logs chi tiết trong UI
-              errorDetail = "Lỗi từ chương trình Solana:\n\n" + logs.join("\n");
-            } else if (sendError.message.includes("custom program error: 0x")) {
-              // Phân tích mã lỗi custom program
-              if (sendError.message.includes("custom program error: 0x2")) {
-                errorDetail =
-                  "Lỗi tham số không hợp lệ (custom program error: 0x2). Có thể do:";
-                errorDetail += "\n- Sai địa chỉ đích";
-                errorDetail += "\n- Sai số lượng SOL";
-                errorDetail += "\n- Guardian không có quyền tạo đề xuất";
-              } else if (
-                sendError.message.includes("custom program error: 0x1")
-              ) {
-                errorDetail = "Lỗi khởi tạo sai (custom program error: 0x1)";
-              } else if (
-                sendError.message.includes("custom program error: 0x3")
-              ) {
-                errorDetail =
-                  "Lỗi đề xuất đã tồn tại (custom program error: 0x3)";
-              } else {
-                // Trích xuất mã lỗi
-                const errorMatch = sendError.message.match(
-                  /custom program error: (0x[0-9a-fA-F]+)/
-                );
-                if (errorMatch && errorMatch[1]) {
-                  errorDetail = `Lỗi chương trình: ${errorMatch[1]}`;
-                } else {
-                  errorDetail = `Lỗi: ${sendError.message}`;
-                }
-              }
-            } else if (sendError.message.includes("Instruction #")) {
-              errorDetail = `Lỗi instruction: ${sendError.message}`;
-
-              // Thêm logs từ blockchain nếu có
-              if (logs.length > 0) {
-                errorDetail +=
-                  "\n\nChi tiết từ blockchain:\n" + logs.join("\n");
-              }
-            } else {
-              errorDetail = `Lỗi: ${sendError.message}`;
-            }
-
-            setStatus(`Giao dịch thất bại: ${errorDetail}`);
-
-            // Hiển thị modal với thông tin lỗi chi tiết nếu logs dài
-            if (logs.length > 5) {
-              // Tạo modal hoặc hiển thị logs trong console để người dùng có thể xem
-              console.error("=== CHI TIẾT LỖI ĐẦY ĐỦ TỪ BLOCKCHAIN ===");
-              console.error(logs.join("\n"));
-            }
-          }
-        } catch (error) {
-          console.error("Lỗi khi xử lý WebAuthn assertion:", error);
-          setStatus(
-            (prev) =>
-              `${prev}\nLỗi khi xử lý WebAuthn assertion: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-          );
-        }
-      } catch (error) {
-        console.error("Lỗi khi tạo đề xuất:", error);
-        setStatus(
-          `Lỗi: ${error instanceof Error ? error.message : String(error)}`
+      if (!multisigAddress || !payerKeypair) {
+        throw new Error(
+          "Vui lòng đảm bảo ví đa chữ ký và keypair đã được khởi tạo"
         );
+      }
+
+      setStatus((prev) => `${prev}\nĐang yêu cầu xác thực WebAuthn...`);
+
+      // 1. Lấy WebAuthn public key
+      const credentialIdHex = Buffer.from(credentialId).toString("hex");
+      const webAuthnPubKey = await getWebAuthnPublicKey(credentialIdHex);
+      
+      // 2. Xử lý WebAuthn assertion
+      const credentialIdString = Buffer.from(credentialId).toString("hex");
+      const { verificationData, normalizedSignature } = 
+          await processWebAuthnAssertion(credentialIdString, webAuthnPubKey);
+
+      // 3. Chuẩn bị các thông số cần thiết
+      const proposalId = new BN(Date.now());
+      const guardianId = new BN(1); // Mặc định là 1 (owner)
+      const multisigPDAObj = new PublicKey(multisigAddress.toString());
+      const destinationPubkey = new PublicKey(destinationAddress);
+      const amountLamports = new BN(parseFloat(amount) * LAMPORTS_PER_SOL);
+
+      // 4. Tạo và cấu hình transaction
+      const transaction = await buildTransactionForProposal({
+        verificationData,
+        webAuthnPubKey,
+        normalizedSignature,
+        proposalId,
+        multisigPDA: multisigPDAObj,
+        guardianId,
+        description,
+        destinationPubkey,
+        amountLamports,
+      });
+
+      // 5. Gửi transaction
+      transaction.feePayer = payerKeypair.publicKey;
+      const latestBlockhash = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = latestBlockhash.blockhash;
+      
+      try {
+        // Ký và gửi transaction
+        transaction.sign(payerKeypair);
+        
+        // Sử dụng version API mới không bị deprecated
+        const signature = await connection.sendRawTransaction(
+          transaction.serialize(),
+          {
+            preflightCommitment: "confirmed",
+          }
+        );
+        
+        // Xác nhận transaction
+        await connection.confirmTransaction({
+          signature,
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+        });
+
+        // 6. Lưu đề xuất vào Firebase
+        await saveProposalToFirebase(
+          proposalId,
+          multisigPDAObj,
+          description,
+          amountLamports,
+          destinationPubkey,
+          signature,
+          threshold
+        );
+
+        // 7. Cập nhật UI và làm mới danh sách đề xuất
+        setStatus(`Đã tạo đề xuất thành công! Signature: ${signature}`);
+        setShowProposalForm(false);
+
+        if (program && multisigInfo?.pubkey) {
+          setTimeout(() => {
+            loadMultisigProposals(multisigInfo.pubkey, program);
+          }, 2000);
+        }
+      } catch (confirmError) {
+        const errorDetail = handleTransactionError(confirmError);
+        setStatus(`Giao dịch thất bại: ${errorDetail}`);
       }
     } catch (error) {
       console.error("Lỗi khi tạo đề xuất:", error);
@@ -785,166 +624,90 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
       setIsLoading(true);
       setStatus("Đang chuẩn bị phê duyệt đề xuất...");
 
+      // Kiểm tra điều kiện cần thiết
       if (!multisigInfo || !payerKeypair) {
         throw new Error("Thông tin ví multisig hoặc keypair không khả dụng");
       }
 
-      // 1. Lấy xác thực WebAuthn
+      // 1. Lấy thông tin xác thực
       const credentialIdString = Buffer.from(credentialId).toString("hex");
-      const assertion = await getWebAuthnAssertion(
-        credentialIdString,
-        undefined,
-        true
+      
+      // 2. Lấy thông tin đề xuất từ Firebase để đảm bảo dữ liệu mới nhất
+      const proposal = await getProposalById(multisigInfo.pubkey.toString(), parseInt(proposalId));
+      if (!proposal) {
+        throw new Error("Không tìm thấy thông tin đề xuất");
+      }
+
+      // 3. Tính PDA cho proposal
+      const [proposalPubkey] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("proposal"),
+          multisigInfo.pubkey.toBuffer(),
+          new BN(parseInt(proposalId)).toArrayLike(Buffer, "le", 8)
+        ],
+        PROGRAM_ID
       );
-      if (!assertion) {
+
+      // 4. Tính PDA cho guardian
+      const guardianId = 1; // Mặc định là 1 (owner)
+      const guardianPDA = getGuardianPDA(multisigInfo.pubkey, guardianId);
+
+      // 5. Lấy thông tin từ WebAuthn assertion
+      const credential = await getWebAuthnAssertion(credentialIdString, undefined, true);
+      if (!credential) {
         throw new Error("Không thể lấy WebAuthn assertion");
       }
+
       setStatus((prev) => `${prev}\nĐã lấy xác thực WebAuthn thành công.`);
+      
+      const signature = new Uint8Array(credential.signature);
+      const authenticatorData = new Uint8Array(credential.authenticatorData);
+      const clientDataJSON = new Uint8Array(credential.clientDataJSON);
 
-      // LẤY WEBAUTHN PUBLIC KEY THẬT TỪ FIREBASE
-      console.log("Lấy WebAuthn public key...");
-      let webAuthnPubKey: Buffer;
-
-      // Thử tìm trong Firebase
-      const credentialMapping = await getWalletByCredentialId(
-        credentialIdString
-      );
-
-      if (
-        !credentialMapping ||
-        !credentialMapping.guardianPublicKey ||
-        credentialMapping.guardianPublicKey.length === 0
-      ) {
-        // Thử tìm trong localStorage
-        console.log(
-          "Không tìm thấy trong Firebase, thử tìm trong localStorage..."
-        );
-        const localStorageData = localStorage.getItem(
-          "webauthn_credential_" + credentialIdString
-        );
-        if (localStorageData) {
-          const localMapping = JSON.parse(localStorageData);
-          if (
-            localMapping &&
-            localMapping.guardianPublicKey &&
-            localMapping.guardianPublicKey.length > 0
-          ) {
-            webAuthnPubKey = Buffer.from(
-              new Uint8Array(localMapping.guardianPublicKey)
-            );
-          } else {
-            throw new Error(
-              "Không tìm thấy WebAuthn public key trong localStorage"
-            );
-          }
-        } else {
-          throw new Error("Không tìm thấy WebAuthn public key");
-        }
-      } else {
-        // Sử dụng WebAuthn public key từ Firebase
-        webAuthnPubKey = Buffer.from(
-          new Uint8Array(credentialMapping.guardianPublicKey)
-        );
-      }
-
-      console.log(
-        "Đã lấy được WebAuthn public key thật:",
-        webAuthnPubKey.toString("hex")
-      );
-
-      // 2. Chuẩn bị message cho secp256r1
+      // 6. Tạo transaction approve proposal
       const timestamp = Math.floor(Date.now() / 1000);
-      // Tạo message theo định dạng yêu cầu của contract
-      const messageString = `approve:proposal_${proposalId},timestamp:${timestamp},pubkey:${payerKeypair.publicKey.toBase58()}`;
+      const tx = await createApproveProposalTx({
+        proposalPubkey,
+        multisigPDA: multisigInfo.pubkey,
+        guardianPDA,
+        guardianId,
+        feePayer: payerKeypair.publicKey,
+        webauthnSignature: signature,
+        authenticatorData,
+        clientDataJSON,
+        proposalId: parseInt(proposalId),
+        timestamp,
+        credentialId: credentialIdString
+      });
 
-      // 4. Chuyển đổi từ DER sang raw
-      const signatureRaw = derToRaw(Buffer.from(assertion.signature));
-      const signatureBuffer = Buffer.from(signatureRaw);
-
-      console.log("Signature (raw):", signatureBuffer.toString("hex"));
-
-      // Chuẩn hóa signature về dạng Low-S
-      const normalizedSignature = normalizeSignatureToLowS(signatureBuffer);
-      console.log("Normalized signature:", normalizedSignature.toString("hex"));
-
-      // ĐÚNG QUY TRÌNH XÁC MINH WEBAUTHN:
-      // 1. Tính hash của clientDataJSON
-      const clientDataHash = await crypto.subtle.digest(
-        "SHA-256",
-        assertion.clientDataJSON
-      );
-      const clientDataHashBytes = new Uint8Array(clientDataHash);
-      console.log(
-        "clientDataJSON hash:",
-        Buffer.from(clientDataHashBytes).toString("hex")
-      );
-
-      // 2. Tạo verification data đúng cách: authenticatorData + hash(clientDataJSON)
-      const verificationData = new Uint8Array(
-        assertion.authenticatorData.length + clientDataHashBytes.length
-      );
-      verificationData.set(new Uint8Array(assertion.authenticatorData), 0);
-      verificationData.set(
-        clientDataHashBytes,
-        assertion.authenticatorData.length
-      );
-
-      console.log("Verification data length:", verificationData.length);
-      console.log(
-        "Verification data (hex):",
-        Buffer.from(verificationData).toString("hex")
-      );
-
-      setStatus(
-        (prev) => `${prev}\nĐang tạo transaction với 2 instructions...`
-      );
-
-      // 5. Tạo instruction cho secp256r1
-      const secp256r1Instruction = createSecp256r1Instruction(
-        Buffer.from(verificationData), // Sử dụng verification data
-        webAuthnPubKey, // Sử dụng public key thật từ Firebase
-        normalizedSignature // Sử dụng chữ ký đã chuẩn hóa
-      );
-
-      // 6. Tạo instruction cho moon wallet program để phê duyệt đề xuất
-      // Đây là phần giả định - bạn cần thay thế với instruction thực tế từ API của bạn
-      // (Tương tự như trong TransferForm.tsx)
-
-      // Tạo transaction và thêm cả hai instruction
-      const transaction = new Transaction();
-      transaction.add(secp256r1Instruction);
-
-      // TODO: Thêm instruction phê duyệt đề xuất của moon wallet
-      // transaction.add(approveProposalInstruction);
-
-      // 7. Gửi transaction
-      // Sử dụng skipPreflight để tránh lỗi với secp256r1 instruction
-      transaction.feePayer = payerKeypair.publicKey;
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
+      // 7. Thiết lập và gửi transaction
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      tx.feePayer = payerKeypair.publicKey;
+      tx.partialSign(payerKeypair);
 
       try {
-        const txId = await sendAndConfirmTransaction(
-          connection,
-          transaction,
-          [payerKeypair],
-          {
-            skipPreflight: false, // Thay đổi để bắt lỗi sớm
+        // Gửi transaction
+        const txId = await connection.sendRawTransaction(tx.serialize(), {
             preflightCommitment: "confirmed",
-          }
-        );
+        });
 
+        // Xác nhận transaction
+        await connection.confirmTransaction({
+          signature: txId,
+          blockhash: tx.recentBlockhash,
+          lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight
+        });
+
+        // 8. Cập nhật UI và dữ liệu
         setStatus(`Đã phê duyệt đề xuất thành công! TxID: ${txId}`);
-
-        // Tải lại danh sách đề xuất
         loadMultisigProposals(multisigInfo.pubkey, program);
 
-        // Cập nhật danh sách chữ ký trong Firebase chỉ khi giao dịch thành công
+        // 9. Cập nhật danh sách chữ ký trong Firebase
         try {
           await addSignerToProposal(
             multisigInfo.pubkey.toString(),
             parseInt(proposalId),
-            payerKeypair.publicKey.toString() // Đây là địa chỉ Solana, không phải WebAuthn public key
+            payerKeypair.publicKey.toString()
           );
           console.log(
             `Đã thêm ${payerKeypair.publicKey.toString()} vào danh sách người ký của đề xuất ${proposalId}`
@@ -954,15 +717,10 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
             "Lỗi khi cập nhật danh sách chữ ký trên Firebase:",
             firebaseError
           );
-          // Không throw error ở đây vì transaction blockchain đã thành công
         }
       } catch (txError) {
-        console.error("Lỗi khi gửi giao dịch:", txError);
-        setStatus(
-          `Lỗi khi gửi giao dịch: ${
-            txError instanceof Error ? txError.message : String(txError)
-          }`
-        );
+        const errorDetail = handleTransactionError(txError);
+        setStatus(`Lỗi khi gửi giao dịch: ${errorDetail}`);
       }
     } catch (error) {
       console.error("Lỗi khi phê duyệt đề xuất:", error);
@@ -983,164 +741,128 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
       setIsLoading(true);
       setStatus("Đang chuẩn bị thực thi đề xuất...");
 
+      // Kiểm tra điều kiện cần thiết
       if (!multisigInfo || !payerKeypair) {
         throw new Error("Thông tin ví multisig hoặc keypair không khả dụng");
       }
 
-      // 1. Lấy xác thực WebAuthn
+      // 1. Lấy thông tin xác thực
       const credentialIdString = Buffer.from(credentialId).toString("hex");
-      const assertion = await getWebAuthnAssertion(
-        credentialIdString,
-        undefined,
-        true
-      );
-      if (!assertion) {
+      const webAuthnPubKey = await getWebAuthnPublicKey(credentialIdString);
+      
+      // 2. Lấy thông tin WebAuthn assertion
+      const credential = await getWebAuthnAssertion(credentialIdString, undefined, true);
+      if (!credential) {
         throw new Error("Không thể lấy WebAuthn assertion");
       }
+      
       setStatus((prev) => `${prev}\nĐã lấy xác thực WebAuthn thành công.`);
 
-      // LẤY WEBAUTHN PUBLIC KEY THẬT TỪ FIREBASE
-      console.log("Lấy WebAuthn public key...");
-      let webAuthnPubKey: Buffer;
-
-      // Thử tìm trong Firebase
-      const credentialMapping = await getWalletByCredentialId(
-        credentialIdString
-      );
-
-      if (
-        !credentialMapping ||
-        !credentialMapping.guardianPublicKey ||
-        credentialMapping.guardianPublicKey.length === 0
-      ) {
-        // Thử tìm trong localStorage
-        console.log(
-          "Không tìm thấy trong Firebase, thử tìm trong localStorage..."
-        );
-        const localStorageData = localStorage.getItem(
-          "webauthn_credential_" + credentialIdString
-        );
-        if (localStorageData) {
-          const localMapping = JSON.parse(localStorageData);
-          if (
-            localMapping &&
-            localMapping.guardianPublicKey &&
-            localMapping.guardianPublicKey.length > 0
-          ) {
-            webAuthnPubKey = Buffer.from(
-              new Uint8Array(localMapping.guardianPublicKey)
-            );
-          } else {
-            throw new Error(
-              "Không tìm thấy WebAuthn public key trong localStorage"
-            );
-          }
-        } else {
-          throw new Error("Không tìm thấy WebAuthn public key");
-        }
-      } else {
-        // Sử dụng WebAuthn public key từ Firebase
-        webAuthnPubKey = Buffer.from(
-          new Uint8Array(credentialMapping.guardianPublicKey)
-        );
-      }
-
-      console.log(
-        "Đã lấy được WebAuthn public key thật:",
-        webAuthnPubKey.toString("hex")
-      );
-
-      // 2. Chuẩn bị message cho secp256r1
-      const timestamp = Math.floor(Date.now() / 1000);
-      // Tạo message theo định dạng yêu cầu của contract
-      const messageString = `execute:proposal_${proposalId},timestamp:${timestamp},pubkey:${payerKeypair.publicKey.toBase58()}`;
-
-      // 4. Chuyển đổi từ DER sang raw
-      const signatureRaw = derToRaw(Buffer.from(assertion.signature));
-      const signatureBuffer = Buffer.from(signatureRaw);
-
-      console.log("Signature (raw):", signatureBuffer.toString("hex"));
-
-      // Chuẩn hóa signature về dạng Low-S
-      const normalizedSignature = normalizeSignatureToLowS(signatureBuffer);
-      console.log("Normalized signature:", normalizedSignature.toString("hex"));
-
-      // ĐÚNG QUY TRÌNH XÁC MINH WEBAUTHN:
-      // 1. Tính hash của clientDataJSON
+      // Tạo verificationData từ assertion
       const clientDataHash = await crypto.subtle.digest(
         "SHA-256",
-        assertion.clientDataJSON
+        credential.clientDataJSON
       );
       const clientDataHashBytes = new Uint8Array(clientDataHash);
-      console.log(
-        "clientDataJSON hash:",
-        Buffer.from(clientDataHashBytes).toString("hex")
-      );
 
-      // 2. Tạo verification data đúng cách: authenticatorData + hash(clientDataJSON)
       const verificationData = new Uint8Array(
-        assertion.authenticatorData.length + clientDataHashBytes.length
+        credential.authenticatorData.length + clientDataHashBytes.length
       );
-      verificationData.set(new Uint8Array(assertion.authenticatorData), 0);
+      verificationData.set(new Uint8Array(credential.authenticatorData), 0);
       verificationData.set(
         clientDataHashBytes,
-        assertion.authenticatorData.length
+        credential.authenticatorData.length
       );
+      
+      // Chuyển đổi chữ ký DER sang raw và chuẩn hóa
+      const signatureRaw = derToRaw(Buffer.from(credential.signature));
+      const signatureBuffer = Buffer.from(signatureRaw);
+      const normalizedSignature = normalizeSignatureToLowS(signatureBuffer);
 
-      console.log("Verification data length:", verificationData.length);
-      console.log(
-        "Verification data (hex):",
-        Buffer.from(verificationData).toString("hex")
-      );
-
-      setStatus(
-        (prev) => `${prev}\nĐang tạo transaction với 2 instructions...`
-      );
-
-      // 5. Tạo instruction cho secp256r1
+      // 3. Tạo instruction secp256r1
       const secp256r1Instruction = createSecp256r1Instruction(
-        Buffer.from(verificationData), // Sử dụng verification data
-        webAuthnPubKey, // Sử dụng public key thật từ Firebase
-        normalizedSignature // Sử dụng chữ ký đã chuẩn hóa
+        Buffer.from(verificationData),
+        webAuthnPubKey,
+        normalizedSignature
       );
 
-      // 6. Tạo instruction cho moon wallet program để thực thi đề xuất
-      // Tạo transaction và thêm instruction
+      // 4. Tạo transaction
       const transaction = new Transaction();
       transaction.add(secp256r1Instruction);
 
-      // TODO: Thêm instruction thực thi đề xuất của moon wallet
-      // transaction.add(executeProposalInstruction);
+      // 5. Tạo discriminator từ IDL cho hàm execute_proposal
+      const executeProposalDiscriminator = Buffer.from([186, 60, 116, 133, 108, 128, 111, 28]);
+      
+      // 6. Tạo dữ liệu cho tham số proposal_id
+      const proposalIdBuffer = Buffer.alloc(8);
+      proposalIdBuffer.writeBigUInt64LE(BigInt(parseInt(proposalId)), 0);
+      
+      // 7. Tạo data instruction với proposal_id
+      const executeData = Buffer.concat([
+        executeProposalDiscriminator,
+        proposalIdBuffer
+      ]);
 
-      // 7. Gửi transaction
-      // Sử dụng skipPreflight để tránh lỗi với secp256r1 instruction
+      // 8. Lấy thông tin đề xuất từ Firebase
+      const proposal = await getProposalById(multisigInfo.pubkey.toString(), parseInt(proposalId));
+      if (!proposal) {
+        throw new Error("Không tìm thấy thông tin đề xuất");
+      }
+
+      // 9. Tạo instruction thực thi đề xuất
+      const destinationPubkey = proposal.destination 
+        ? new PublicKey(proposal.destination) 
+        : SystemProgram.programId;
+
+      const executeInstruction = new TransactionInstruction({
+        keys: [
+          { pubkey: multisigInfo.pubkey, isSigner: false, isWritable: true }, // multisig
+          { pubkey: proposalPubkey, isSigner: false, isWritable: true }, // proposal
+          { pubkey: payerKeypair.publicKey, isSigner: true, isWritable: true }, // payer
+          { pubkey: destinationPubkey, isSigner: false, isWritable: true }, // destination
+          { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false }, // clock
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+        ],
+        programId: PROGRAM_ID,
+        data: executeData,
+      });
+      
+      // 10. Thêm instruction thực thi đề xuất vào transaction
+      transaction.add(executeInstruction);
+
+      // 11. Thiết lập và gửi transaction
       transaction.feePayer = payerKeypair.publicKey;
       const { blockhash } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
+      transaction.sign(payerKeypair);
 
       try {
-        const txId = await sendAndConfirmTransaction(
-          connection,
-          transaction,
-          [payerKeypair],
+        // Gửi transaction
+        const txId = await connection.sendRawTransaction(
+          transaction.serialize(),
           {
-            skipPreflight: false, // Thêm skipPreflight để tránh lỗi
             preflightCommitment: "confirmed",
           }
         );
 
-        setStatus(`Đã thực thi đề xuất thành công! TxID: ${txId}`);
+        // Xác nhận transaction
+        await connection.confirmTransaction({
+          signature: txId,
+          blockhash: blockhash,
+          lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight
+        });
 
-        // Tải lại danh sách đề xuất
+        // 12. Cập nhật UI và dữ liệu
+        setStatus(`Đã thực thi đề xuất thành công! TxID: ${txId}`);
         loadMultisigProposals(multisigInfo.pubkey, program);
 
-        // Cập nhật trạng thái đề xuất thành 'executed' trong Firebase chỉ khi giao dịch thành công
+        // 13. Cập nhật trạng thái đề xuất trong Firebase
         try {
           await updateProposalStatus(
             multisigInfo.pubkey.toString(),
             parseInt(proposalId),
             "executed",
-            txId // Sử dụng biến txId từ kết quả của quá trình thực thi
+            txId
           );
           console.log(
             `Đã cập nhật trạng thái đề xuất ${proposalId} thành 'executed'`
@@ -1150,15 +872,10 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
             "Lỗi khi cập nhật trạng thái đề xuất trên Firebase:",
             firebaseError
           );
-          // Không throw error ở đây vì transaction blockchain đã thành công
         }
       } catch (txError) {
-        console.error("Lỗi khi gửi giao dịch:", txError);
-        setStatus(
-          `Lỗi khi gửi giao dịch: ${
-            txError instanceof Error ? txError.message : String(txError)
-          }`
-        );
+        const errorDetail = handleTransactionError(txError);
+        setStatus(`Lỗi khi gửi giao dịch: ${errorDetail}`);
       }
     } catch (error) {
       console.error("Lỗi khi thực thi đề xuất:", error);
@@ -1220,8 +937,8 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
           {showMultisigPanel && multisigAddress && (
             <>
               <div>
-                <label>Địa chỉ ví:</label>
-                <div>{multisigAddress.toString()}</div>
+                <label htmlFor="wallet-address">Địa chỉ ví:</label>
+                <div id="wallet-address">{multisigAddress.toString()}</div>
               </div>
 
               <div>
@@ -1230,14 +947,20 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
                 >
                   Xem Danh Sách Đề Xuất
                 </button>
+                <button
+                  onClick={toggleProposalForm}
+                >
+                  {showProposalForm ? "Ẩn Form Tạo Đề Xuất" : "Tạo Đề Xuất Mới"}
+                </button>
               </div>
 
-              {showTransferForm && (
+              {showProposalForm && (
                 <div>
-                  <h3>Chuyển Tiền</h3>
+                  <h3>Tạo Đề Xuất Mới</h3>
                   <div>
-                    <label>Địa chỉ nhận:</label>
+                    <label htmlFor="destination-address">Địa chỉ nhận:</label>
                     <input
+                      id="destination-address"
                       type="text"
                       value={destinationAddress}
                       onChange={(e) => setDestinationAddress(e.target.value)}
@@ -1246,8 +969,9 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
                   </div>
 
                   <div>
-                    <label>Số lượng SOL:</label>
+                    <label htmlFor="amount">Số lượng SOL:</label>
                     <input
+                      id="amount"
                       type="text"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
@@ -1256,8 +980,9 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
                   </div>
 
                   <div>
-                    <label>Mô tả:</label>
+                    <label htmlFor="description">Mô tả:</label>
                     <input
+                      id="description"
                       type="text"
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
@@ -1277,14 +1002,14 @@ export const MultisigPanel: FC<MultisigPanelProps> = ({
               {proposals.length > 0 && (
                 <div>
                   <h3>Danh Sách Đề Xuất</h3>
-                  {proposals.map((proposal, index) => (
-                    <div key={index}>
+                  {proposals.map((proposal) => (
+                    <div key={`proposal-${proposal.id}`}>
                       <div>
                         <div>
                           {proposal.description}
                         </div>
                         <div>
-                          {proposal.status}
+                          {formatProposalStatus(proposal.status)}
                         </div>
                       </div>
 

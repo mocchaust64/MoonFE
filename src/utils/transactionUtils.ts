@@ -13,27 +13,32 @@ export const SYSVAR_INSTRUCTIONS_PUBKEY = new PublicKey("Sysvar1nstructions11111
 export const SYSVAR_CLOCK_PUBKEY = new PublicKey("SysvarC1ock11111111111111111111111111111111");
 
 /**
+ * Interface để giảm số lượng tham số
+ */
+interface ApproveProposalParams {
+  proposalPDA: PublicKey;
+  multisigPDA: PublicKey;
+  guardianPDA: PublicKey;
+  guardianId: number;
+  payer: PublicKey;
+  webauthnSignature: Uint8Array;
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  proposalId: string | number;
+  timestamp: number;
+  credentialId?: string;
+}
+
+/**
  * Hàm tạo transaction để ký phê duyệt một đề xuất
  */
-export const createApproveProposalTx = async (
-  proposalPDA: PublicKey,
-  multisigPDA: PublicKey,
-  guardianPDA: PublicKey,
-  guardianId: number,
-  payer: PublicKey,
-  webauthnSignature: Uint8Array,
-  authenticatorData: Uint8Array,
-  clientDataJSON: Uint8Array,
-  proposalId: string | number,
-  timestamp: number,
-  credentialId?: string
-): Promise<Transaction> => {
+export const createApproveProposalTx = async (params: ApproveProposalParams): Promise<Transaction> => {
   // Tạo transaction mới
   const transaction = new Transaction();
 
   // Lấy WebAuthn public key từ credential, truyền credentialId nếu có
   console.log("Đang tìm WebAuthn public key...");
-  const webAuthnPubKey = await getWebAuthnPublicKey(guardianPDA, credentialId);
+  const webAuthnPubKey = await getWebAuthnPublicKey(params.guardianPDA, params.credentialId);
   
   if (!webAuthnPubKey) {
     throw new Error("Không tìm thấy WebAuthn public key cho guardian này");
@@ -72,21 +77,21 @@ export const createApproveProposalTx = async (
   console.log("pubkeyHashHex cuối cùng:", pubkeyHashHex);
 
   // 1. Tạo message để ký
-  const messageString = `approve:proposal_${proposalId},guardian_${guardianId},timestamp:${timestamp},pubkey:${pubkeyHashHex}`;
+  const messageString = `approve:proposal_${params.proposalId},guardian_${params.guardianId},timestamp:${params.timestamp},pubkey:${pubkeyHashHex}`;
   const messageBuffer = Buffer.from(messageString);
   console.log("Thông điệp được ký:", messageString);
 
   // 2. Tính hash của clientDataJSON
-  const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSON);
+  const clientDataHash = await crypto.subtle.digest('SHA-256', params.clientDataJSON);
   const clientDataHashBytes = new Uint8Array(clientDataHash);
 
   // 3. Tạo verification data: authenticatorData + hash(clientDataJSON)
-  const verificationData = new Uint8Array(authenticatorData.length + clientDataHashBytes.length);
-  verificationData.set(new Uint8Array(authenticatorData), 0);
-  verificationData.set(clientDataHashBytes, authenticatorData.length);
+  const verificationData = new Uint8Array(params.authenticatorData.length + clientDataHashBytes.length);
+  verificationData.set(new Uint8Array(params.authenticatorData), 0);
+  verificationData.set(clientDataHashBytes, params.authenticatorData.length);
 
   // 4. Chuyển đổi signature từ DER sang raw format
-  const rawSignature = derToRaw(webauthnSignature);
+  const rawSignature = derToRaw(params.webauthnSignature);
   
   // 5. Chuẩn hóa signature về dạng Low-S
   const normalizedSignature = normalizeSignatureToLowS(Buffer.from(rawSignature));
@@ -109,13 +114,13 @@ export const createApproveProposalTx = async (
   
   // Tạo các buffer cho tham số
   const proposalIdBuffer = Buffer.alloc(8);
-  proposalIdBuffer.writeBigUInt64LE(BigInt(proposalId), 0);
+  proposalIdBuffer.writeBigUInt64LE(BigInt(params.proposalId), 0);
   
   const guardianIdBuffer = Buffer.alloc(8);
-  guardianIdBuffer.writeBigUInt64LE(BigInt(guardianId), 0);
+  guardianIdBuffer.writeBigUInt64LE(BigInt(params.guardianId), 0);
   
   const timestampBuffer = Buffer.alloc(8);
-  timestampBuffer.writeBigInt64LE(BigInt(timestamp), 0);
+  timestampBuffer.writeBigInt64LE(BigInt(params.timestamp), 0);
   
   // Tạo message buffer và độ dài
   const messageLenBuffer = Buffer.alloc(4);
@@ -134,12 +139,12 @@ export const createApproveProposalTx = async (
   // 8. Tạo danh sách account cần thiết
   const approveIx = new TransactionInstruction({
     keys: [
-      { pubkey: multisigPDA, isSigner: false, isWritable: true }, // Thay đổi isWritable thành true
-      { pubkey: proposalPDA, isSigner: false, isWritable: true },
+      { pubkey: params.multisigPDA, isSigner: false, isWritable: true }, // Thay đổi isWritable thành true
+      { pubkey: params.proposalPDA, isSigner: false, isWritable: true },
       // Danh sách tài khoản signature sẽ được tạo PDA từ proposal và guardianId
-      { pubkey: await findSignaturePDA(proposalPDA, guardianId), isSigner: false, isWritable: true },
-      { pubkey: guardianPDA, isSigner: false, isWritable: false },
-      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: findSignaturePDA(params.proposalPDA, params.guardianId), isSigner: false, isWritable: true },
+      { pubkey: params.guardianPDA, isSigner: false, isWritable: false },
+      { pubkey: params.payer, isSigner: true, isWritable: true },
       { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
       { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
@@ -157,8 +162,8 @@ export const createApproveProposalTx = async (
 /**
  * Hàm hỗ trợ để tìm PDA cho signature từ proposal và guardianId
  */
-async function findSignaturePDA(proposalPDA: PublicKey, guardianId: number): Promise<PublicKey> {
-  const [pda] = await PublicKey.findProgramAddress(
+function findSignaturePDA(proposalPDA: PublicKey, guardianId: number): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
     [
       Buffer.from("signature"),
       proposalPDA.toBuffer(),
@@ -186,13 +191,18 @@ async function getWebAuthnPublicKey(guardianPDA: PublicKey, overrideCredentialId
     console.log("Sử dụng credential ID được chỉ định:", credentialId);
   } else {
     // Kiểm tra xem có credential ID trong localStorage không
-    const userCredentials = JSON.parse(localStorage.getItem("userCredentials") || "[]");
-    if (userCredentials.length === 0) {
-      throw new Error("Không tìm thấy thông tin đăng nhập WebAuthn. Vui lòng đăng nhập trước.");
+    try {
+      const userCredentials = JSON.parse(localStorage.getItem("userCredentials") ?? "[]");
+      if (userCredentials.length === 0) {
+        throw new Error("Không tìm thấy thông tin đăng nhập WebAuthn. Vui lòng đăng nhập trước.");
+      }
+      
+      credentialId = userCredentials[0].id;
+      console.log("Sử dụng credential ID từ userCredentials:", credentialId);
+    } catch (error) {
+      // Xử lý ngoại lệ
+      throw new Error(`Lỗi khi đọc thông tin người dùng: ${error instanceof Error ? error.message : String(error)}`);
     }
-    
-    credentialId = userCredentials[0].id;
-    console.log("Sử dụng credential ID từ userCredentials:", credentialId);
   }
   
   // Chuẩn hóa credential ID
@@ -227,7 +237,8 @@ const normalizeCredentialId = (credId: string): string => {
     const buffer = Buffer.from(credId, 'base64');
     return buffer.toString('hex');
   } catch (e) {
-    // Nếu đã là hex, trả về nguyên
+    // Xử lý trường hợp không thể decode dưới dạng base64
+    console.log(`Credential ID không phải base64 hợp lệ, giả định đã là hex: ${e instanceof Error ? e.message : String(e)}`);
     return credId;
   }
 };
@@ -250,8 +261,9 @@ export const createExecuteProposalTx = async (
   console.log('Execute Proposal Discriminator (hex):', Buffer.from(executeProposalDiscriminator).toString('hex'));
   
   // Tạo dữ liệu cho proposal_id
-  const proposalIdMatch = proposalPDA.toString().match(/proposal-(\d+)/);
-  const proposalId = proposalIdMatch ? parseInt(proposalIdMatch[1]) : 1; // Lấy ID từ tên PDA hoặc mặc định là 1
+  const proposalIdRegex = /proposal-(\d+)/;
+  const regexResult = proposalIdRegex.exec(proposalPDA.toString());
+  const proposalId = regexResult ? parseInt(regexResult[1]) : 1; // Lấy ID từ tên PDA hoặc mặc định là 1
   
   const proposalIdBuffer = Buffer.alloc(8);
   proposalIdBuffer.writeBigUInt64LE(BigInt(proposalId), 0);
@@ -333,9 +345,6 @@ export const derToRaw = (derSignature: Uint8Array): Uint8Array => {
     throw new Error("DER signature không bắt đầu với 0x30");
   }
   
-  // Lấy độ dài tổng thể
-  const totalLength = derSignature[1];
-  
   // Lấy r
   const rType = derSignature[2];
   if (rType !== 0x02) {
@@ -398,8 +407,8 @@ export const normalizeSignatureToLowS = (signature: Buffer): Buffer => {
   const halfCurveOrder = curveOrderBN.div(new BN(2));
   
   // Tách signature thành r và s
-  const r = signature.slice(0, 32);
-  const s = signature.slice(32, 64);
+  const r = Buffer.from(signature.subarray(0, 32));
+  const s = Buffer.from(signature.subarray(32, 64));
   
   // Chuyển s thành BN
   const sBN = new BN(s);

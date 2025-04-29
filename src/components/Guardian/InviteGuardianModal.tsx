@@ -27,7 +27,7 @@ interface InviteGuardianModalProps {
 export function InviteGuardianModal({
   open,
   onOpenChange,
-}: InviteGuardianModalProps) {
+}: Readonly<InviteGuardianModalProps>) {
   const { multisigPDA, walletName } = useWalletInfo();
   const [inviteLink, setInviteLink] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
@@ -98,7 +98,7 @@ export function InviteGuardianModal({
 
       const newGuardianId = await findNextAvailableGuardianId();
       const newInviteCode = generateRandomCode(8);
-      const baseUrl = "https://e187-14-174-106-138.ngrok-free.app";
+      const baseUrl = "https://0da8-222-252-14-158.ngrok-free.app";
       const newInviteLink = `${baseUrl}/guardian/${newInviteCode}`;
 
       await saveInvitation({
@@ -156,11 +156,17 @@ export function InviteGuardianModal({
 
               {/* Invitation Link */}
               <div className="space-y-1.5">
-                <label className="text-sm leading-none font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                <label 
+                  htmlFor="invitation-link" 
+                  className="text-sm leading-none font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
                   Invitation Link
                 </label>
                 <div className="flex items-center gap-2">
-                  <div className="bg-muted flex-1 overflow-hidden rounded-md p-2.5">
+                  <div 
+                    id="invitation-link"
+                    className="bg-muted flex-1 overflow-hidden rounded-md p-2.5"
+                  >
                     <div className="font-mono text-sm break-all">
                       {inviteLink}
                     </div>

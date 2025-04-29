@@ -75,13 +75,27 @@ export const createActionParams = (
   destination?: PublicKey | string,
   tokenMint?: PublicKey | string
 ): ActionParams => {
+  // Xử lý amount
+  let finalAmount = null;
+  if (amount) {
+    finalAmount = typeof amount === 'number' ? new BN(amount) : amount;
+  }
+  
+  // Xử lý destination
+  let finalDestination = null;
+  if (destination) {
+    finalDestination = typeof destination === 'string' ? new PublicKey(destination) : destination;
+  }
+  
+  // Xử lý tokenMint
+  let finalTokenMint = null;
+  if (tokenMint) {
+    finalTokenMint = typeof tokenMint === 'string' ? new PublicKey(tokenMint) : tokenMint;
+  }
+  
   return {
-    amount: amount ? (typeof amount === 'number' ? new BN(amount) : amount) : null,
-    destination: destination 
-      ? (typeof destination === 'string' ? new PublicKey(destination) : destination) 
-      : null,
-    tokenMint: tokenMint 
-      ? (typeof tokenMint === 'string' ? new PublicKey(tokenMint) : tokenMint) 
-      : null,
+    amount: finalAmount,
+    destination: finalDestination,
+    tokenMint: finalTokenMint,
   };
 };

@@ -19,8 +19,8 @@ import { hashRecoveryPhrase } from "@/utils/guardianUtils";
 import { createWebAuthnCredential } from "@/utils/webauthnUtils";
 
 export interface GuardianSignupProps {
-  inviteCode: string;
-  onComplete?: () => void;
+  readonly inviteCode: string;
+  readonly onComplete?: () => void;
 }
 
 export function GuardianSignup({
@@ -200,10 +200,11 @@ export function GuardianSignup({
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium">
+            <label htmlFor="guardian-name" className="mb-1 block text-sm font-medium">
               Tên Guardian
             </label>
             <Input
+              id="guardian-name"
               value={guardianName}
               onChange={(e) => {
                 setGuardianName(e.target.value);
@@ -223,10 +224,11 @@ export function GuardianSignup({
           </div>
           
           <div>
-            <label className="mb-1 block text-sm font-medium">
+            <label htmlFor="recovery-phrase" className="mb-1 block text-sm font-medium">
               Recovery Phrase
             </label>
             <Input
+              id="recovery-phrase"
               type="password"
               value={recoveryPhrase}
               onChange={(e) => setRecoveryPhrase(e.target.value)}
@@ -253,11 +255,15 @@ export function GuardianSignup({
             disabled={isLoading || !guardianId || isRegistrationSuccess || nameError !== ""}
             className="w-full"
           >
-            {isLoading
-              ? "Processing..."
-              : isRegistrationSuccess
-                ? "Registration Submitted"
-                : "Register"}
+            {(() => {
+              if (isLoading) {
+                return "Processing...";
+              } else if (isRegistrationSuccess) {
+                return "Registration Submitted";
+              } else {
+                return "Register";
+              }
+            })()}
           </Button>
         </form>
       </CardContent>

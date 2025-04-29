@@ -444,7 +444,7 @@ export const searchGuardiansByUsername = async (
     
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      const guardianName = data.guardianName?.toLowerCase() || '';
+      const guardianName = data.guardianName?.toLowerCase() ?? '';
       
       // Kiểm tra nếu tên guardian chứa chuỗi tìm kiếm
       if (guardianName.includes(searchName)) {

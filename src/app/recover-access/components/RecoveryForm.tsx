@@ -11,8 +11,8 @@ import { GuardianData } from "@/types/guardian";
 import { useRouter } from "next/navigation";
 
 interface RecoveryFormProps {
-  currentStep: "search" | "verify" | "create" | "confirm";
-  onStepChange: (step: "search" | "verify" | "create" | "confirm") => void;
+  readonly currentStep: "search" | "verify" | "create" | "confirm";
+  readonly onStepChange: (step: "search" | "verify" | "create" | "confirm") => void;
 }
 
 export function RecoveryForm({ currentStep, onStepChange }: RecoveryFormProps) {
@@ -82,7 +82,7 @@ export function RecoveryForm({ currentStep, onStepChange }: RecoveryFormProps) {
       }
       
       // 1. Tạo WebAuthn credential mới
-      const webAuthnResult = await createWebAuthnCredential(selectedGuardian.guardianName || "My Wallet");
+      const webAuthnResult = await createWebAuthnCredential(selectedGuardian.guardianName ?? "My Wallet");
       
       // 2. Hash recovery phrase
       const hashedRecoveryBytes = await hashRecoveryPhrase(recoveryPhrase);
@@ -103,7 +103,7 @@ export function RecoveryForm({ currentStep, onStepChange }: RecoveryFormProps) {
       
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || "Lỗi khi khôi phục quyền truy cập");
+        throw new Error(data.error ?? "Lỗi khi khôi phục quyền truy cập");
       }
       
       // Lưu thông tin credential vào localStorage
@@ -133,8 +133,9 @@ export function RecoveryForm({ currentStep, onStepChange }: RecoveryFormProps) {
         {currentStep === "search" && (
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium">Tên Guardian</label>
+              <label htmlFor="username" className="mb-1 block text-sm font-medium">Tên Guardian</label>
               <Input
+                id="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Nhập tên guardian của bạn"
@@ -156,25 +157,28 @@ export function RecoveryForm({ currentStep, onStepChange }: RecoveryFormProps) {
           <div className="space-y-4">
             {guardianOptions.length > 0 && (
               <div>
-                <label className="mb-1 block text-sm font-medium">Chọn guardian</label>
+                <label htmlFor="guardian-select" className="mb-1 block text-sm font-medium">Chọn guardian</label>
                 <div className="space-y-2">
                   {guardianOptions.map((guardian) => (
-                    <div 
+                    <button 
                       key={guardian.inviteCode}
-                      className={`cursor-pointer rounded-md border p-3 ${selectedGuardian?.inviteCode === guardian.inviteCode ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' : ''}`}
+                      className={`w-full text-left cursor-pointer rounded-md border p-3 ${selectedGuardian?.inviteCode === guardian.inviteCode ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' : ''}`}
                       onClick={() => setSelectedGuardian(guardian)}
+                      type="button"
+                      aria-pressed={selectedGuardian?.inviteCode === guardian.inviteCode}
                     >
-                      <p className="font-medium">{guardian.guardianName || "Unnamed Guardian"}</p>
+                      <p className="font-medium">{guardian.guardianName ?? "Unnamed Guardian"}</p>
                       <p className="text-sm text-muted-foreground">Guardian ID: {guardian.guardianId}</p>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
             )}
             
             <div>
-              <label className="mb-1 block text-sm font-medium">Mã khôi phục</label>
+              <label htmlFor="recovery-phrase" className="mb-1 block text-sm font-medium">Mã khôi phục</label>
               <Input
+                id="recovery-phrase"
                 type="password"
                 value={recoveryPhrase}
                 onChange={(e) => setRecoveryPhrase(e.target.value)}

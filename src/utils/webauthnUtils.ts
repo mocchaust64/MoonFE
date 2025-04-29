@@ -2,76 +2,81 @@ import * as CBOR from "cbor-web";
 
 import { bufferToHex } from "./bufferUtils";
 
+// Định nghĩa interface ở đầu file để tránh lỗi reference
+interface StoredCredential {
+  credentialId: string;
+  publicKey: string;
+  userId: number[];
+  displayName: string;
+  createdAt: string;
+}
+
 /**
  * Tạo WebAuthn credential mới
  */
 export const createWebAuthnCredential = async (
   walletName: string,
 ): Promise<{ credentialId: string; publicKey: string; rawId: Uint8Array }> => {
-  try {
-    if (!isWebAuthnSupported()) {
-      throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
-    }
-
-    const challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
-
-    const userId = new Uint8Array(16);
-    crypto.getRandomValues(userId);
-
-    const options: PublicKeyCredentialCreationOptions = {
-      challenge: challenge,
-      rp: {
-        name: "Moon Wallet",
-        id: window.location.hostname,
-      },
-      user: {
-        id: userId,
-        name: walletName,
-        displayName: walletName,
-      },
-      pubKeyCredParams: [
-        { type: "public-key", alg: -7 },
-        { type: "public-key", alg: -257 },
-      ],
-      authenticatorSelection: {
-        authenticatorAttachment: "platform",
-        userVerification: "preferred",
-        requireResidentKey: true,
-      },
-      timeout: 60000,
-      attestation: "direct",
-    };
-
-    const credential = (await navigator.credentials.create({
-      publicKey: options,
-    })) as PublicKeyCredential;
-
-    if (!credential) {
-      throw new Error("Không thể tạo khóa WebAuthn");
-    }
-
-    const response = credential.response as AuthenticatorAttestationResponse;
-
-    const attestationBuffer = new Uint8Array(response.attestationObject);
-    const attestationObject = CBOR.decode(attestationBuffer.buffer);
-
-    const credentialId = bufferToHex(credential.rawId);
-
-    const authData = attestationObject.authData;
-    const publicKeyBytes = extractPublicKeyFromAuthData(authData);
-    const publicKey = bufferToHex(publicKeyBytes);
-
-    saveCredentialInfo(credentialId, publicKey, userId, walletName);
-
-    return {
-      credentialId,
-      publicKey,
-      rawId: new Uint8Array(credential.rawId),
-    };
-  } catch (error) {
-    throw error;
+  if (!isWebAuthnSupported()) {
+    throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
   }
+
+  const challenge = new Uint8Array(32);
+  crypto.getRandomValues(challenge);
+
+  const userId = new Uint8Array(16);
+  crypto.getRandomValues(userId);
+
+  const options: PublicKeyCredentialCreationOptions = {
+    challenge: challenge,
+    rp: {
+      name: "Moon Wallet",
+      id: window.location.hostname,
+    },
+    user: {
+      id: userId,
+      name: walletName,
+      displayName: walletName,
+    },
+    pubKeyCredParams: [
+      { type: "public-key", alg: -7 },
+      { type: "public-key", alg: -257 },
+    ],
+    authenticatorSelection: {
+      authenticatorAttachment: "platform",
+      userVerification: "preferred",
+      requireResidentKey: true,
+    },
+    timeout: 60000,
+    attestation: "direct",
+  };
+
+  const credential = (await navigator.credentials.create({
+    publicKey: options,
+  })) as PublicKeyCredential;
+
+  if (!credential) {
+    throw new Error("Không thể tạo khóa WebAuthn");
+  }
+
+  const response = credential.response as AuthenticatorAttestationResponse;
+
+  const attestationBuffer = new Uint8Array(response.attestationObject);
+  const attestationObject = CBOR.decode(attestationBuffer.buffer);
+
+  const credentialId = bufferToHex(credential.rawId);
+
+  const authData = attestationObject.authData;
+  const publicKeyBytes = extractPublicKeyFromAuthData(authData);
+  const publicKey = bufferToHex(publicKeyBytes);
+
+  saveCredentialInfo(credentialId, publicKey, userId, walletName);
+
+  return {
+    credentialId,
+    publicKey,
+    rawId: new Uint8Array(credential.rawId),
+  };
 };
 
 /**
@@ -102,6 +107,8 @@ function extractPublicKeyFromAuthData(authData: Uint8Array): Uint8Array {
 
     return uncompressedKey;
   } catch (e) {
+    console.error("Lỗi khi trích xuất public key:", e);
+    // Tạo khóa giả nếu có lỗi - đây là xử lý dự phòng
     const dummyKey = new Uint8Array(65);
     dummyKey[0] = 0x04;
     const randomX = new Uint8Array(32);
@@ -147,21 +154,17 @@ export const getWebAuthnCredential = async (
     timeout: 60000,
   };
 
-  try {
-    const assertion = (await navigator.credentials.get({
-      publicKey: options,
-    })) as PublicKeyCredential;
+  const assertion = (await navigator.credentials.get({
+    publicKey: options,
+  })) as PublicKeyCredential;
 
-    const response = assertion.response as AuthenticatorAssertionResponse;
+  const response = assertion.response as AuthenticatorAssertionResponse;
 
-    return {
-      signature: new Uint8Array(response.signature),
-      authenticatorData: new Uint8Array(response.authenticatorData),
-      clientDataJSON: new Uint8Array(response.clientDataJSON),
-    };
-  } catch (error) {
-    throw error;
-  }
+  return {
+    signature: new Uint8Array(response.signature),
+    authenticatorData: new Uint8Array(response.authenticatorData),
+    clientDataJSON: new Uint8Array(response.clientDataJSON),
+  };
 };
 
 /**
@@ -215,7 +218,8 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
     offset++; // Skip 0x02
     
     const rLen = signature[offset++];
-    const r = signature.slice(offset, offset + rLen);
+    // Thay thế slice bằng Buffer.subarray (không deprecated)
+    const r = Buffer.from(signature.subarray(offset, offset + rLen));
     offset += rLen;
     
     // Đọc s
@@ -225,7 +229,8 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
     offset++; // Skip 0x02
     
     const sLen = signature[offset++];
-    const s = signature.slice(offset, offset + sLen);
+    // Thay thế slice bằng Buffer.subarray (không deprecated)
+    const s = Buffer.from(signature.subarray(offset, offset + sLen));
    
     // Chuẩn bị r và s cho định dạng raw (mỗi phần 32 bytes)
     const rPadded = new Uint8Array(32);
@@ -236,7 +241,8 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
       rPadded.set(new Uint8Array(r), 32 - r.length);
     } else {
       // Trường hợp r dài hơn 32 bytes (thường là có byte 0x00 ở đầu), lấy 32 bytes cuối
-      rPadded.set(new Uint8Array(r.slice(r.length - 32)));
+      // Thay thế slice bằng Buffer.subarray (không deprecated)
+      rPadded.set(new Uint8Array(r.subarray(r.length - 32)));
     }
     
     if (s.length <= 32) {
@@ -244,7 +250,8 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
       sPadded.set(new Uint8Array(s), 32 - s.length);
     } else {
       // Trường hợp s dài hơn 32 bytes, lấy 32 bytes cuối
-      sPadded.set(new Uint8Array(s.slice(s.length - 32)));
+      // Thay thế slice bằng Buffer.subarray (không deprecated)
+      sPadded.set(new Uint8Array(s.subarray(s.length - 32)));
     }
     
     // Nối r và s lại
@@ -254,9 +261,66 @@ export const derToRaw = (signature: Buffer): Uint8Array => {
     
     return rawSignature;
   } catch (error) {
+    console.error('Lỗi khi chuyển đổi chữ ký từ DER sang raw:', error);
     throw error;
   }
 };
+
+// Tách phần đọc thông tin credentials từ localStorage
+function getCredentialsFromLocalStorage(): StoredCredential[] {
+  try {
+    const credentialsListStr = localStorage.getItem("webauthnCredentials");
+    if (!credentialsListStr) return [];
+    
+    const credentialsList = JSON.parse(credentialsListStr);
+    return Array.isArray(credentialsList) ? credentialsList : [];
+  } catch (error) {
+    console.warn("Không thể đọc danh sách credentials từ localStorage:", error);
+    return [];
+  }
+}
+
+// Tách phần tìm kiếm public key từ danh sách credentials
+function findPublicKeyByRawId(credentials: StoredCredential[], rawId: ArrayBuffer): Uint8Array | undefined {
+  const hexId = bufferToHex(rawId);
+  const matchingCred = credentials.find(cred => cred.credentialId === hexId);
+  
+  if (matchingCred?.publicKey) {
+    return Buffer.from(matchingCred.publicKey, "hex");
+  }
+  return undefined;
+}
+
+// Tách phần tạo allowCredentials options
+function createAllowCredentialsOptions(
+  credentialId: string | undefined, 
+  allowEmpty: boolean,
+  credentials: StoredCredential[]
+): { id: ArrayBuffer; type: "public-key" }[] | undefined {
+  if (credentialId && !allowEmpty) {
+    // Sửa Buffer thành Uint8Array và chuyển sang ArrayBuffer
+    const idBuffer = new Uint8Array(Buffer.from(credentialId, "hex")).buffer;
+    return [
+      {
+        id: idBuffer,
+        type: "public-key",
+      },
+    ];
+  } 
+  
+  if (!credentialId && !allowEmpty && credentials.length > 0) {
+    return credentials.map((cred) => {
+      // Sửa Buffer thành Uint8Array và chuyển sang ArrayBuffer
+      const idBuffer = new Uint8Array(Buffer.from(cred.credentialId, "hex")).buffer;
+      return {
+        id: idBuffer,
+        type: "public-key" as const,
+      };
+    });
+  }
+  
+  return undefined;
+}
 
 /**
  * Lấy WebAuthn assertion từ credential đã có
@@ -275,85 +339,38 @@ export const getWebAuthnAssertion = async (
     throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
   }
 
-  // Tạo challenge từ message hoặc ngẫu nhiên nếu không có message
-  let challenge: Uint8Array;
-  if (message) {
-    // QUAN TRỌNG: KHÔNG hash message ở đây
-    // WebAuthn sẽ tự động hash message với SHA-256
-    // Gửi message gốc trực tiếp làm challenge
-    challenge = new TextEncoder().encode(message);
-  } else {
-    // Nếu không, tạo challenge ngẫu nhiên
-    challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
-  }
+  // Tạo challenge từ message hoặc ngẫu nhiên
+  const challenge = message 
+    ? new TextEncoder().encode(message)
+    : crypto.getRandomValues(new Uint8Array(32));
 
+  // Đọc credentials từ localStorage
+  const credentials = getCredentialsFromLocalStorage();
+  
   // Tạo options cho get assertion
   const options: PublicKeyCredentialRequestOptions = {
-    challenge: challenge,
+    challenge,
     rpId: window.location.hostname,
     timeout: 60000,
     userVerification: "preferred",
+    allowCredentials: createAllowCredentialsOptions(credentialId, allowEmpty, credentials)
   };
 
-  // Nếu có credentialId cụ thể, chỉ cho phép credential đó
-  if (credentialId && !allowEmpty) {
-    options.allowCredentials = [
-      {
-        id: Buffer.from(credentialId, "hex"),
-        type: "public-key",
-      },
-    ];
-  } else if (!credentialId && !allowEmpty) {
-    // Nếu không, tạo danh sách tất cả credentials đã lưu
-    try {
-      const credentialsListStr = localStorage.getItem("webauthnCredentials");
-      if (credentialsListStr) {
-        const credentialsList = JSON.parse(credentialsListStr) as StoredCredential[];
-        if (Array.isArray(credentialsList) && credentialsList.length > 0) {
-          options.allowCredentials = credentialsList.map((cred) => ({
-            id: Buffer.from(cred.credentialId, "hex"),
-            type: "public-key" as PublicKeyCredentialType,
-          }));
-        }
-      }
-    } catch (error) {
-    }
-  }
+  const assertion = (await navigator.credentials.get({
+    publicKey: options,
+  })) as PublicKeyCredential;
 
-  try {
-    const assertion = (await navigator.credentials.get({
-      publicKey: options,
-    })) as PublicKeyCredential;
+  const response = assertion.response as AuthenticatorAssertionResponse;
+  
+  // Tìm public key từ localStorage
+  const pubKey = findPublicKeyByRawId(credentials, assertion.rawId);
 
-    const response = assertion.response as AuthenticatorAssertionResponse;
-    
-    // Tìm public key từ localStorage
-    let pubKey: Uint8Array | undefined;
-    try {
-      const credentialsListStr = localStorage.getItem("webauthnCredentials");
-      if (credentialsListStr) {
-        const credentialsList = JSON.parse(credentialsListStr) as StoredCredential[];
-        const matchingCred = credentialsList.find(
-          (cred: StoredCredential) => cred.credentialId === bufferToHex(assertion.rawId)
-        );
-        if (matchingCred && matchingCred.publicKey) {
-          pubKey = Buffer.from(matchingCred.publicKey, "hex");
-        }
-      }
-    } catch (error) {
-      console.warn("Không thể lấy public key từ localStorage:", error);
-    }
-
-    return {
-      signature: new Uint8Array(response.signature),
-      authenticatorData: new Uint8Array(response.authenticatorData),
-      clientDataJSON: new Uint8Array(response.clientDataJSON),
-      pubKey
-    };
-  } catch (error) {
-    throw error;
-  }
+  return {
+    signature: new Uint8Array(response.signature),
+    authenticatorData: new Uint8Array(response.authenticatorData),
+    clientDataJSON: new Uint8Array(response.clientDataJSON),
+    pubKey
+  };
 };
 
 /**
@@ -366,36 +383,24 @@ function saveCredentialInfo(
   displayName: string,
 ): void {
   try {
-    // Chuẩn bị thông tin credential để lưu
-    const credentialInfo: StoredCredential = {
+    const newCredential: StoredCredential = {
       credentialId,
       publicKey,
-      userId: Array.from(userId), // Chuyển Uint8Array thành Array để có thể serialize
+      userId: Array.from(userId),
       displayName,
       createdAt: new Date().toISOString(),
     };
 
-    // Lưu vào danh sách credentials
-    let credentialsList = [];
-    try {
-      const credentialsListStr = localStorage.getItem("webauthnCredentials");
-      if (credentialsListStr) {
-        credentialsList = JSON.parse(credentialsListStr);
-      }
-    } catch (storageError) {
-    }
+    // Thêm vào danh sách credentials
+    const credentials = getCredentialsFromLocalStorage();
+    const updatedCredentials = [...credentials, newCredential];
 
-    // Thêm credential mới vào danh sách
-    credentialsList.push(credentialInfo);
-
-    try {
-      localStorage.setItem(
-        "webauthnCredentials",
-        JSON.stringify(credentialsList),
-      );
-    } catch (saveError) {
-    }
+    localStorage.setItem(
+      "webauthnCredentials",
+      JSON.stringify(updatedCredentials)
+    );
   } catch (error) {
+    console.error("Không thể lưu thông tin credential:", error);
   }
 }
 
@@ -440,9 +445,6 @@ export const getWebAuthnAssertionForLogin = async (
       throw new Error("Credential ID không được cung cấp");
     }
 
-    // Nếu không có credential ID và allowEmpty = true,
-    // có thể trình duyệt sẽ hiển thị tất cả credentials có sẵn
-
     const assertion = (await navigator.credentials.get({
       publicKey: options,
     })) as PublicKeyCredential;
@@ -458,7 +460,7 @@ export const getWebAuthnAssertionForLogin = async (
   } catch (error) {
     return {
       success: false,
-      error: (error as Error).message || "Không thể xác thực",
+      error: error instanceof Error ? error.message : "Không thể xác thực",
     };
   }
 };
@@ -484,12 +486,3 @@ export const createWebAuthnVerificationData = async (
   
   return verificationData;
 };
-
-// Thêm kiểu cho credential được lưu trong localStorage
-interface StoredCredential {
-  credentialId: string;
-  publicKey: string;
-  userId: number[];
-  displayName: string;
-  createdAt: string;
-}

@@ -5,7 +5,6 @@ import { getGuardianPDA } from '@/utils/credentialUtils';
 import { PROGRAM_ID } from '@/utils/constants';
 import { saveWebAuthnCredentialMapping } from '@/lib/firebase/webAuthnService';
 import { Buffer } from 'buffer';
-import BN from 'bn.js';
 
 export async function POST(req: Request) {
   try {
@@ -112,7 +111,15 @@ export async function POST(req: Request) {
     );
     
     console.log("Transaction đã gửi, signature:", signature);
-    await connection.confirmTransaction(signature, 'confirmed');
+    
+    // Đợi xác nhận với phương thức mới
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+    await connection.confirmTransaction({
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      signature
+    }, 'confirmed');
+    
     console.log("Transaction đã được xác nhận");
     
     // Cập nhật Firebase

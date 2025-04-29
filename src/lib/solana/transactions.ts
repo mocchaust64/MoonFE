@@ -116,29 +116,39 @@ function bigIntToLeBytes(value: bigint, bytesLength: number = 8): Uint8Array {
 }
 
 /**
+ * Interface cho tham số hàm tạo transaction thêm guardian
+ */
+export interface AddGuardianTxManualParams {
+  multisigPDA: PublicKey;
+  guardianPDA: PublicKey;
+  feePayer: PublicKey;
+  guardianName: string;
+  guardianId: number;
+  recoveryHashIntermediate: Uint8Array;
+  webauthnPubkey?: Uint8Array;
+  isOwner?: boolean;
+}
+
+/**
  * Tạo transaction thêm guardian theo phương pháp thủ công
  * Cách này phù hợp với cấu trúc dữ liệu instruction của Solana program
  */
 export const createAddGuardianTxManual = (
-  multisigPDA: PublicKey,
-  guardianPDA: PublicKey,
-  feePayer: PublicKey,
-  guardianName: string,
-  guardianId: number,
-  recoveryHashIntermediate: Uint8Array,
-  webauthnPubkey?: Uint8Array,
-  isOwner: boolean = true
+  params: AddGuardianTxManualParams
 ): Transaction => {
   try {
+    // Đặt giá trị mặc định cho tham số isOwner nếu không được cung cấp
+    const isOwner = params.isOwner ?? true;
+    
     // Discriminator cho add_guardian
     const addGuardianDiscriminator = new Uint8Array([167, 189, 170, 27, 74, 240, 201, 241]);
     
     // Chuyển guardian ID thành bytes
-    const guardianIdBigInt = BigInt(guardianId);
+    const guardianIdBigInt = BigInt(params.guardianId);
     const guardianIdBytes = bigIntToLeBytes(guardianIdBigInt);
     
     // Chuẩn bị tên guardian
-    const guardianNameBuffer = Buffer.from(guardianName);
+    const guardianNameBuffer = Buffer.from(params.guardianName);
     const guardianNameLenBuffer = Buffer.alloc(4);
     guardianNameLenBuffer.writeUInt32LE(guardianNameBuffer.length, 0);
     
@@ -151,14 +161,14 @@ export const createAddGuardianTxManual = (
       bufferToUint8Array(Buffer.from(guardianIdBytes)),
       bufferToUint8Array(guardianNameLenBuffer),
       bufferToUint8Array(guardianNameBuffer),
-      recoveryHashIntermediate,
+      params.recoveryHashIntermediate,
       isOwnerByte,
     ];
     
     // Thêm webauthnPubkey nếu có
-    if (webauthnPubkey) {
+    if (params.webauthnPubkey) {
       buffers.push(new Uint8Array([1])); // Some variant
-      buffers.push(webauthnPubkey);
+      buffers.push(params.webauthnPubkey);
     } else {
       buffers.push(new Uint8Array([0])); // None variant
     }
@@ -170,10 +180,10 @@ export const createAddGuardianTxManual = (
     tx.add(
       new TransactionInstruction({
         keys: [
-          { pubkey: multisigPDA, isSigner: false, isWritable: true },
-          { pubkey: guardianPDA, isSigner: false, isWritable: true },
-          { pubkey: feePayer, isSigner: false, isWritable: false },
-          { pubkey: feePayer, isSigner: true, isWritable: true },
+          { pubkey: params.multisigPDA, isSigner: false, isWritable: true },
+          { pubkey: params.guardianPDA, isSigner: false, isWritable: true },
+          { pubkey: params.feePayer, isSigner: false, isWritable: false },
+          { pubkey: params.feePayer, isSigner: true, isWritable: true },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }
         ],
         programId: PROGRAM_ID,
@@ -251,7 +261,7 @@ export const readMultisigNonce = async (
   const nonceOffset = 19;
   
   // Đọc 8 bytes của transaction_nonce
-  const nonceBytes = accountInfo.data.slice(nonceOffset, nonceOffset + 8);
+  const nonceBytes = accountInfo.data.subarray(nonceOffset, nonceOffset + 8);
   const currentNonce = new BN(nonceBytes, 'le');
   
   return currentNonce.toNumber();

@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error("Error creating guardian invitation:", error);
     return NextResponse.json(
-      { error: "Failed to create invitation", details: error?.message || "Unknown error" },
+      { error: "Failed to create invitation", details: error?.message ?? "Unknown error" },
       { status: 500 }
     );
   }

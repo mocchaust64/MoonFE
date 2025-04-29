@@ -22,8 +22,15 @@ export const sendTransaction = async (
     // Gửi giao dịch đến mạng
     const signature = await connection.sendRawTransaction(serializedTransaction);
     
-    // Đợi xác nhận
-    await connection.confirmTransaction(signature, "confirmed");
+    // Lấy blockhash gần nhất để sử dụng cho confirmTransaction
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+    
+    // Đợi xác nhận với cú pháp mới
+    await connection.confirmTransaction({
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      signature: signature
+    }, 'confirmed');
     
     return signature;
   } catch (error) {

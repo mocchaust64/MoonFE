@@ -46,7 +46,7 @@ export async function getGuardiansFromBlockchain(
     );
     
     // Số lượng guardian thực tế
-    const guardianCount = multisigData.guardianCount || 1; // Mặc định là 1 nếu không tìm thấy
+    const guardianCount = multisigData.guardianCount ?? 1; // Mặc định là 1 nếu không tìm thấy
     
     // Chỉ kiểm tra các ID từ 1 đến guardian_count
     for (let i = 1; i <= guardianCount; i++) {
@@ -106,31 +106,27 @@ function parseGuardianData(
   guardianPDA: PublicKey,
 ): Guardian {
   // Bỏ qua 8 byte discriminator
-  const guardianData = data.slice(8);
+  const guardianData = Buffer.from(data.subarray(8));
 
   try {
     // Parse dữ liệu theo cấu trúc của Guardian account từ IDL
-
-    // 1. Đọc wallet address (32 bytes)
-    const walletBytes = guardianData.slice(0, 32);
-    const wallet = new PublicKey(walletBytes);
-
+    
     // 2. Đọc guardian_id (8 bytes - u64)
-    const guardianIdBytes = guardianData.slice(32, 40);
+    const guardianIdBytes = guardianData.subarray(32, 40);
     let guardianId = BigInt(0);
     for (let i = 0; i < 8; i++) {
       guardianId |= BigInt(guardianIdBytes[i]) << BigInt(8 * i);
     }
 
     // 3. Đọc recovery_hash (32 bytes)
-    const recoveryHash = guardianData.slice(40, 72);
+    const recoveryHash = guardianData.subarray(40, 72);
     const recoveryHashHex = Buffer.from(recoveryHash).toString("hex");
 
     // 4. Đọc webauthn_pubkey (option<[u8; 33]>)
     let webauthnPubkey: string | undefined;
     const hasWebauthn = guardianData[72] === 1;
     if (hasWebauthn) {
-      const webauthnKey = guardianData.slice(73, 106);
+      const webauthnKey = guardianData.subarray(73, 106);
       webauthnPubkey = Buffer.from(webauthnKey).toString("hex");
     }
 
@@ -204,7 +200,7 @@ export const hashRecoveryPhrase = async (
 ): Promise<Uint8Array> => {
   const phraseBytes = new TextEncoder().encode(phrase);
   const inputBytes = new Uint8Array(32);
-  inputBytes.set(phraseBytes.slice(0, Math.min(phraseBytes.length, 32)));
+  inputBytes.set(phraseBytes.subarray(0, Math.min(phraseBytes.length, 32)));
   const hashBuffer = await crypto.subtle.digest("SHA-256", inputBytes);
   return new Uint8Array(hashBuffer);
 };

@@ -1,7 +1,7 @@
 import { 
-  collection, query, where, orderBy, getDocs, 
-  addDoc, updateDoc, doc, getDoc, serverTimestamp,
-  Timestamp
+  collection, query, where, getDocs, 
+  addDoc, updateDoc, doc, serverTimestamp,
+
 } from "firebase/firestore";
 import { PublicKey } from "@solana/web3.js";
 import { db } from "./config";
@@ -57,7 +57,7 @@ export const getProposalsByWallet = async (multisigAddress: PublicKey): Promise<
           status: data.status,
           createdAt: data.createdAt,
           creator: data.creator,
-          signers: data.signers || [],
+          signers: data.signers ?? [],
           requiredSignatures: data.requiredSignatures,
           destination: data.destination,
           amount: data.amount,
@@ -68,8 +68,8 @@ export const getProposalsByWallet = async (multisigAddress: PublicKey): Promise<
       
       // Sắp xếp thủ công thay vì dùng orderBy trong query
       fetchedProposals.sort((a, b) => {
-        const dateA = a.createdAt?.toDate?.() || new Date(0);
-        const dateB = b.createdAt?.toDate?.() || new Date(0);
+        const dateA = a.createdAt?.toDate?.() ?? new Date(0);
+        const dateB = b.createdAt?.toDate?.() ?? new Date(0);
         return dateB.getTime() - dateA.getTime();
       });
       
@@ -95,7 +95,7 @@ export const getProposalsByWallet = async (multisigAddress: PublicKey): Promise<
             status: data.status,
             createdAt: data.createdAt,
             creator: data.creator,
-            signers: data.signers || [],
+            signers: data.signers ?? [],
             requiredSignatures: data.requiredSignatures,
             destination: data.destination,
             amount: data.amount,
@@ -107,8 +107,8 @@ export const getProposalsByWallet = async (multisigAddress: PublicKey): Promise<
       
       // Sắp xếp thủ công
       allProposals.sort((a, b) => {
-        const dateA = a.createdAt?.toDate?.() || new Date(0);
-        const dateB = b.createdAt?.toDate?.() || new Date(0);
+        const dateA = a.createdAt?.toDate?.() ?? new Date(0);
+        const dateB = b.createdAt?.toDate?.() ?? new Date(0);
         return dateB.getTime() - dateA.getTime();
       });
       
@@ -152,7 +152,7 @@ export const getProposalById = async (multisigAddress: string, proposalId: numbe
       status: docData.status,
       createdAt: docData.createdAt,
       creator: docData.creator,
-      signers: docData.signers || [],
+      signers: docData.signers ?? [],
       requiredSignatures: docData.requiredSignatures,
       destination: docData.destination,
       amount: docData.amount,
@@ -250,7 +250,7 @@ export const addSignerToProposal = async (
     
     const docRef = doc(db, 'proposals', querySnapshot.docs[0].id);
     const docData = querySnapshot.docs[0].data();
-    const existingSigners = docData.signers || [];
+    const existingSigners = docData.signers ?? [];
     
     // Kiểm tra xem đã ký chưa
     if (existingSigners.includes(signerPublicKey)) {

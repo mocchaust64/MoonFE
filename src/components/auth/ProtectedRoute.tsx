@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { useWalletInfo } from "@/hooks/useWalletInfo";
 
 interface ProtectedRouteProps {
-  children: React.ReactNode;
+  readonly children: React.ReactNode;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
@@ -18,6 +18,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     const isProtectedRoute =
       pathname !== "/" &&
       pathname !== "/create-wallet" &&
+      pathname !== "/recover-access" &&
       !pathname.startsWith("/guardian");
 
     // Nếu đã đăng nhập và đang ở trang chủ (/)

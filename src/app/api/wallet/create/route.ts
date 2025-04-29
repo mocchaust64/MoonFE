@@ -42,7 +42,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const signature = await connection.sendTransaction(transaction, [feePayer]);
+    // Lấy blockhash mới nhất
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+    transaction.recentBlockhash = latestBlockhash.blockhash;
+    transaction.feePayer = feePayer.publicKey;
+    transaction.sign(feePayer);
+
+    // Gửi giao dịch đã ký
+    const signature = await connection.sendRawTransaction(
+      transaction.serialize(),
+      { skipPreflight: false }
+    );
     
     // Lưu tên ví vào Firebase
     if (name) {

@@ -252,7 +252,6 @@ export function DashboardContent() {
         <TransferModal
           isOpen={showTransferModal}
           onClose={handleCloseTransferModal}
-          walletAddress={multisigPDA}
           credentialId={credentialId}
           guardianId={guardianId}
           connection={connection}

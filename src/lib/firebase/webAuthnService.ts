@@ -224,12 +224,117 @@ export const deleteCredentialMapping = async (
   }
 };
 
-/**
- * Lấy thông tin WebAuthn public key của guardian theo multisigAddress và guardianId
- * @param multisigAddress Địa chỉ ví multisig
- * @param guardianId ID của guardian
- * @returns Public key của guardian (dạng Uint8Array) hoặc null nếu không tìm thấy
- */
+// Hàm kiểm tra và lấy public key từ localStorage
+async function getPublicKeyFromLocalStorage(
+  multisigAddress: string,
+  guardianIdNumber: number
+): Promise<Uint8Array | null> {
+  const storedCredentialId = localStorage.getItem('current_credential_id');
+  if (!storedCredentialId) {
+    return null;
+  }
+  
+  const localStorageKey = "webauthn_credential_" + storedCredentialId;
+  const localMapping = localStorage.getItem(localStorageKey);
+  
+  if (!localMapping) {
+    return null;
+  }
+  
+  try {
+    const mappingData = JSON.parse(localMapping);
+    console.log("Thông tin WebAuthn từ localStorage:", {
+      credentialId: storedCredentialId,
+      guardianId: mappingData.guardianId,
+      walletAddress: mappingData.walletAddress
+    });
+    
+    // Kiểm tra nếu guardianId khớp và walletAddress khớp
+    if (mappingData.guardianId === guardianIdNumber && 
+        mappingData.walletAddress === multisigAddress &&
+        mappingData.guardianPublicKey && 
+        Array.isArray(mappingData.guardianPublicKey)) {
+      
+      console.log("Sử dụng thông tin guardian từ localStorage");
+      const publicKeyArray = new Uint8Array(mappingData.guardianPublicKey);
+      console.log(`Public key từ localStorage: ${Buffer.from(publicKeyArray).toString('hex')}`);
+      return publicKeyArray;
+    }
+  } catch (e) {
+    console.error("Lỗi khi parse thông tin credential từ localStorage:", e);
+  }
+  
+  return null;
+}
+
+// Hàm tìm kiếm và lấy public key từ Firebase
+async function getPublicKeyFromFirebase(
+  multisigAddress: string, 
+  guardianIdNumber: number
+): Promise<Uint8Array | null> {
+  // Tìm thông tin guardian trong Firebase
+  const guardiansRef = collection(db, "webauthn_credentials");
+  const q = query(
+    guardiansRef,
+    where("walletAddress", "==", multisigAddress),
+    where("guardianId", "==", guardianIdNumber)
+  );
+  
+  const querySnapshot = await getDocs(q);
+  
+  if (querySnapshot.empty) {
+    console.error(`Không tìm thấy guardian với ID ${guardianIdNumber} cho ví ${multisigAddress}`);
+    return null;
+  }
+  
+  // Lấy dữ liệu của guardian đầu tiên tìm thấy
+  const guardianCredential = querySnapshot.docs[0].data();
+  console.log(`Tìm thấy thông tin guardian từ Firebase:`, guardianCredential);
+  
+  // Debug thông tin guardianPublicKey
+  logPublicKeyDebugInfo(guardianCredential.guardianPublicKey);
+  
+  // Kiểm tra tính hợp lệ của public key
+  if (!guardianCredential.guardianPublicKey || !Array.isArray(guardianCredential.guardianPublicKey)) {
+    console.error(`Guardian ID ${guardianIdNumber} không có public key hợp lệ`);
+    return null;
+  }
+  
+  // Chuyển đổi public key từ mảng số thành Uint8Array
+  return new Uint8Array(guardianCredential.guardianPublicKey);
+}
+
+// Hàm ghi log thông tin debug về public key
+function logPublicKeyDebugInfo(publicKey: any): void {
+  if (publicKey) {
+    console.log("Kiểu dữ liệu guardianPublicKey:", typeof publicKey);
+    console.log("Là mảng?", Array.isArray(publicKey));
+    console.log("Độ dài:", publicKey.length);
+    
+    // Xem 5 phần tử đầu tiên (nếu có) để debug
+    if (Array.isArray(publicKey) && publicKey.length > 0) {
+      console.log("Một số giá trị từ guardianPublicKey:", 
+        publicKey.slice(0, 5));
+    }
+  }
+}
+
+// Hàm lưu public key vào localStorage
+function savePublicKeyToLocalStorage(
+  multisigAddress: string, 
+  guardianIdNumber: number, 
+  publicKeyArray: Uint8Array
+): void {
+  try {
+    localStorage.setItem(
+      `guardian_pubkey_${multisigAddress}_${guardianIdNumber}`,
+      JSON.stringify(Array.from(publicKeyArray))
+    );
+  } catch (e) {
+    console.warn("Không thể lưu public key vào localStorage:", e);
+  }
+}
+
 export async function getGuardianWebAuthnPublicKey(
   multisigPDA: PublicKey | string,
   guardianId: number
@@ -244,92 +349,24 @@ export async function getGuardianWebAuthnPublicKey(
     
     console.log(`Đang lấy WebAuthn public key cho guardian ID ${guardianIdNumber} của ví ${multisigAddress}`);
     
-    // Kiểm tra thông tin trong localStorage trước
-    const storedCredentialId = localStorage.getItem('current_credential_id');
-    if (storedCredentialId) {
-      const localStorageKey = "webauthn_credential_" + storedCredentialId;
-      const localMapping = localStorage.getItem(localStorageKey);
-      
-      if (localMapping) {
-        try {
-          const mappingData = JSON.parse(localMapping);
-          console.log("Thông tin WebAuthn từ localStorage:", {
-            credentialId: storedCredentialId,
-            guardianId: mappingData.guardianId,
-            walletAddress: mappingData.walletAddress
-          });
-          
-          // Kiểm tra nếu guardianId khớp và walletAddress khớp
-          if (mappingData.guardianId === guardianIdNumber && 
-              mappingData.walletAddress === multisigAddress &&
-              mappingData.guardianPublicKey && 
-              Array.isArray(mappingData.guardianPublicKey)) {
-            
-            console.log("Sử dụng thông tin guardian từ localStorage");
-            const publicKeyArray = new Uint8Array(mappingData.guardianPublicKey);
-            console.log(`Public key từ localStorage: ${Buffer.from(publicKeyArray).toString('hex')}`);
-            return publicKeyArray;
-          }
-        } catch (e) {
-          console.error("Lỗi khi parse thông tin credential từ localStorage:", e);
-        }
-      }
+    // Thử lấy từ localStorage trước
+    const localStoragePublicKey = await getPublicKeyFromLocalStorage(multisigAddress, guardianIdNumber);
+    if (localStoragePublicKey) {
+      return localStoragePublicKey;
     }
     
-    // Tìm thông tin guardian trong Firebase
-    const guardiansRef = collection(db, "webauthn_credentials");
-    const q = query(
-      guardiansRef,
-      where("walletAddress", "==", multisigAddress),
-      where("guardianId", "==", guardianIdNumber)
-    );
-    
-    const querySnapshot = await getDocs(q);
-    
-    if (querySnapshot.empty) {
-      console.error(`Không tìm thấy guardian với ID ${guardianIdNumber} cho ví ${multisigAddress}`);
+    // Nếu không có trong localStorage, tìm trong Firebase
+    const firebasePublicKey = await getPublicKeyFromFirebase(multisigAddress, guardianIdNumber);
+    if (!firebasePublicKey) {
       return null;
     }
     
-    // Lấy dữ liệu của guardian đầu tiên tìm thấy
-    const guardianCredential = querySnapshot.docs[0].data();
+    console.log(`Đã lấy được public key: ${Buffer.from(firebasePublicKey).toString('hex')}`);
     
-    console.log(`Tìm thấy thông tin guardian từ Firebase:`, guardianCredential);
+    // Lưu vào localStorage để lần sau nhanh hơn
+    savePublicKeyToLocalStorage(multisigAddress, guardianIdNumber, firebasePublicKey);
     
-    // Debug thông tin guardianPublicKey
-    if (guardianCredential.guardianPublicKey) {
-      console.log("Kiểu dữ liệu guardianPublicKey:", typeof guardianCredential.guardianPublicKey);
-      console.log("Là mảng?", Array.isArray(guardianCredential.guardianPublicKey));
-      console.log("Độ dài:", guardianCredential.guardianPublicKey.length);
-      
-      // Xem 5 phần tử đầu tiên (nếu có) để debug
-      if (Array.isArray(guardianCredential.guardianPublicKey) && guardianCredential.guardianPublicKey.length > 0) {
-        console.log("Một số giá trị từ guardianPublicKey:", 
-          guardianCredential.guardianPublicKey.slice(0, 5));
-      }
-    }
-    
-    // Lấy public key từ thông tin guardian
-    if (!guardianCredential.guardianPublicKey || !Array.isArray(guardianCredential.guardianPublicKey)) {
-      console.error(`Guardian ID ${guardianIdNumber} không có public key hợp lệ`);
-      return null;
-    }
-    
-    // Chuyển đổi public key từ mảng số thành Uint8Array
-    const publicKeyArray = new Uint8Array(guardianCredential.guardianPublicKey);
-    console.log(`Đã lấy được public key: ${Buffer.from(publicKeyArray).toString('hex')}`);
-    
-    // Thử lưu vào localStorage để lần sau nhanh hơn
-    try {
-      localStorage.setItem(
-        `guardian_pubkey_${multisigAddress}_${guardianIdNumber}`,
-        JSON.stringify(Array.from(publicKeyArray))
-      );
-    } catch (e) {
-      console.warn("Không thể lưu public key vào localStorage:", e);
-    }
-    
-    return publicKeyArray;
+    return firebasePublicKey;
   } catch (error) {
     console.error(`Lỗi khi lấy WebAuthn public key:`, error);
     return null;

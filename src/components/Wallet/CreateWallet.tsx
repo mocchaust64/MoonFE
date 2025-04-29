@@ -16,6 +16,7 @@ import { getMultisigPDA, getGuardianPDA } from "@/utils/credentialUtils";
 import { hashRecoveryPhrase } from "@/utils/guardianUtils";
 import { createWebAuthnCredential } from "@/utils/webauthnUtils";
 import { saveWebAuthnCredentialMapping } from "@/lib/firebase/webAuthnService";
+import { checkGuardianNameExists } from "@/lib/firebase/guardianService";
 
 export default function CreateWallet() {
   const router = useRouter();
@@ -29,11 +30,39 @@ export default function CreateWallet() {
     "details" | "members" | "review"
   >("details");
   const { setMultisigPDA, setWalletData } = useWalletStore();
+  const [isCheckingName, setIsCheckingName] = useState(false);
+  const [nameError, setNameError] = useState("");
   
+  const checkDuplicateName = async (name: string) => {
+    if (!name) return;
+    
+    setIsCheckingName(true);
+    setNameError("");
+    
+    try {
+      const exists = await checkGuardianNameExists(name);
+      if (exists) {
+        setNameError("Tên guardian này đã tồn tại. Vui lòng chọn tên khác.");
+      }
+    } catch (error) {
+      console.error("Lỗi khi kiểm tra tên:", error);
+    } finally {
+      setIsCheckingName(false);
+    }
+  };
+
   const handleCreateWallet = async () => {
     try {
       setIsLoading(true);
       setError("");
+
+      // Kiểm tra tên guardian trùng lặp
+      const exists = await checkGuardianNameExists(walletName);
+      if (exists) {
+        setNameError("Tên guardian này đã tồn tại. Vui lòng chọn tên khác.");
+        setIsLoading(false);
+        return;
+      }
 
       // Kiểm tra ngưỡng ký không vượt quá MAX_ALLOWED_THRESHOLD
       const validThreshold = Math.min(threshold, MAX_ALLOWED_THRESHOLD);
@@ -81,6 +110,7 @@ export default function CreateWallet() {
           webauthnPubkey: Array.from(compressedKeyBuffer),
           webauthnCredentialId: rawIdBase64,
           multisigPDA: multisigPDA.toString(),
+          isInitialOwner: true
         }),
       });
 
@@ -179,10 +209,20 @@ export default function CreateWallet() {
                 <Input
                   placeholder="Enter wallet name"
                   value={walletName}
-                  onChange={(e) => setWalletName(e.target.value)}
+                  onChange={(e) => {
+                    setWalletName(e.target.value);
+                    setNameError("");
+                  }}
+                  onBlur={() => checkDuplicateName(walletName)}
                   maxLength={32}
                   className="h-11"
                 />
+                {nameError && (
+                  <p className="mt-1 text-sm text-red-500">{nameError}</p>
+                )}
+                {isCheckingName && (
+                  <p className="mt-1 text-sm text-blue-500">Đang kiểm tra tên...</p>
+                )}
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium">
@@ -202,7 +242,7 @@ export default function CreateWallet() {
               <Button
                 className="h-11 w-full text-base font-medium"
                 onClick={() => setCurrentStep("members")}
-                disabled={!walletName}
+                disabled={!walletName || !!nameError}
               >
                 Continue
               </Button>

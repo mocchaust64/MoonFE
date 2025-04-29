@@ -1,16 +1,18 @@
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useRef } from "react";
 
-import { connection } from "@/lib/solana";
-import { program } from "@/lib/solana";
+import { connection, program } from "@/lib/solana";
+
 import { useWalletStore } from "@/store/walletStore";
 import { getGuardiansFromBlockchain } from "@/utils/guardianUtils";
 import { getWalletMetadata } from "@/lib/firebase/walletService";
 
-// Key để lưu trữ thời gian fetch lần cuối trong localStorage
-const LAST_FETCH_TIME_KEY = "moonwallet_last_fetch_time";
-// Thời gian tối thiểu giữa các lần fetch (10 giây)
-const MIN_FETCH_INTERVAL = 10000;
+// Thời gian tối thiểu giữa các lần fetch (30 giây)
+const REFRESH_INTERVAL = 30000;
+// Thời gian giữa các lần fetch đầy đủ (5 phút)
+const FULL_REFRESH_INTERVAL = 300000;
+// Thời gian timeout cho mỗi request (15 giây)
+const FETCH_TIMEOUT = 15000;
 
 export function useWalletInfo() {
   const {
@@ -28,270 +30,253 @@ export function useWalletInfo() {
     error,
   } = useWalletStore();
   
-  // Sử dụng useRef để theo dõi subscription ID
-  const subscriptionIdRef = useRef<number | null>(null);
-  // Ref để theo dõi dữ liệu account trước đó
-  const previousDataRef = useRef<Buffer | null>(null);
-  // Ref để theo dõi thời gian fetch lần cuối
-  const lastFetchTimeRef = useRef<number>(0);
   // Ref để theo dõi nếu component vẫn mounted
   const isMountedRef = useRef<boolean>(true);
   // Ref để theo dõi nếu đang fetch
   const isFetchingRef = useRef<boolean>(false);
-  // Ref để theo dõi nếu đã có dữ liệu ban đầu
-  const hasInitialDataRef = useRef<boolean>(false);
-  // Ref để theo dõi thời gian cập nhật thông tin đầy đủ cuối cùng
-  const lastFullUpdateRef = useRef<number>(0);
-  // State để đảm bảo re-render không gây lặp vô hạn
-  const [fetchCount, setFetchCount] = useState(0);
+  // Ref để theo dõi thời gian fetch lần cuối
+  const lastFetchTimeRef = useRef<number>(0);
+  // Ref để theo dõi thời gian fetch đầy đủ lần cuối
+  const lastFullFetchTimeRef = useRef<number>(0);
+  // Ref để theo dõi interval ID
+  const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
+  // Ref để theo dõi timeout ID
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Chỉ tải số dư ví
-  const fetchBalance = useCallback(async () => {
-    if (!multisigPDA || isFetchingRef.current) return;
+  // Hàm fetch với timeout
+  const fetchWithTimeout = useCallback(async (promise: Promise<any>) => {
+    let timeoutId: NodeJS.Timeout | null = null;
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error("Fetch operation timed out"));
+      }, FETCH_TIMEOUT);
+    });
+    
+    try {
+      const result = await Promise.race([promise, timeoutPromise]);
+      if (timeoutId) clearTimeout(timeoutId);
+      return result;
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      throw error;
+    }
+  }, []);
 
-    // Kiểm tra thời gian giữa các lần fetch để tránh gọi quá nhiều
-    const now = Date.now();
-    if (now - lastFetchTimeRef.current < MIN_FETCH_INTERVAL) {
+  // Hàm lấy chỉ số dư ví
+  const fetchBalanceOnly = useCallback(async (pubkey: PublicKey, now: number) => {
+    // Thiết lập timeout cho balance fetch
+    const solBalance = await fetchWithTimeout(connection.getBalance(pubkey));
+    
+    // Cập nhật thời gian fetch
+    lastFetchTimeRef.current = now;
+    
+    // Chỉ cập nhật nếu có sự thay đổi đáng kể
+    if (isMountedRef.current && Math.abs(solBalance / LAMPORTS_PER_SOL - balance) > 0.00001) {
+      setWalletData({
+        balance: solBalance / LAMPORTS_PER_SOL,
+        threshold,
+        guardianCount,
+        guardians,
+        walletName,
+      });
+    }
+    
+    return solBalance;
+  }, [setWalletData, balance, threshold, guardianCount, guardians, walletName, fetchWithTimeout]);
+
+  // Hàm lấy tên ví từ metadata hoặc blockchain
+  const getWalletNameFromSources = useCallback(async (
+    pubkey: PublicKey, 
+    multisigData: any, 
+    currentWalletName: string
+  ) => {
+    // Mặc định tên wallet
+    let updatedWalletName = "Unnamed Wallet";
+    
+    // Ưu tiên 1: Lấy từ blockchain nếu có
+    if (multisigData.name) {
+      return multisigData.name;
+    } 
+    
+    // Ưu tiên 2: Giữ nguyên tên đang có nếu hợp lệ
+    if (currentWalletName && currentWalletName !== "Unnamed Wallet") {
+      return currentWalletName;
+    }
+    
+    // Ưu tiên 3: Lấy từ Firebase
+    try {
+      const walletMetadata = await fetchWithTimeout(getWalletMetadata(pubkey.toString()));
+      if (walletMetadata?.name) {
+        updatedWalletName = walletMetadata.name;
+      }
+    } catch (error) {
+      console.error("Error fetching wallet name from Firebase:", error);
+    }
+    
+    return updatedWalletName;
+  }, [fetchWithTimeout]);
+
+  // Hàm cập nhật đầy đủ thông tin ví
+  const updateWalletData = useCallback(async (
+    pubkey: PublicKey, 
+    solBalance: number,
+    multisigData: any,
+    updatedGuardians: any[],
+    updatedWalletName: string
+  ) => {
+    if (isMountedRef.current) {
+      setWalletData({
+        balance: solBalance / LAMPORTS_PER_SOL,
+        threshold: multisigData.threshold,
+        guardianCount: multisigData.guardianCount,
+        guardians: updatedGuardians,
+        walletName: updatedWalletName,
+      });
+    }
+  }, [setWalletData]);
+
+  // Fetch đầy đủ thông tin ví
+  const fetchFullWalletInfo = useCallback(async (pubkey: PublicKey, now: number, solBalance: number) => {
+    // Lấy thông tin ví từ blockchain
+    const accountInfo = await fetchWithTimeout(connection.getAccountInfo(pubkey));
+    if (!accountInfo) {
+      throw new Error("Multisig account not found");
+    }
+
+    // Giải mã dữ liệu ví
+    const multisigData = program.coder.accounts.decode(
+      "multiSigWallet",
+      accountInfo.data,
+    );
+
+    // Lấy danh sách guardians
+    if (!multisigPDA) {
+      throw new Error("MultisigPDA is null or undefined");
+    }
+    const updatedGuardians = await fetchWithTimeout(getGuardiansFromBlockchain(multisigPDA));
+    
+    // Lấy tên ví
+    const updatedWalletName = await getWalletNameFromSources(pubkey, multisigData, walletName);
+    
+    // Cập nhật thời gian fetch đầy đủ
+    lastFullFetchTimeRef.current = now;
+    
+    // Cập nhật dữ liệu vào store
+    await updateWalletData(pubkey, solBalance, multisigData, updatedGuardians, updatedWalletName);
+    
+  }, [multisigPDA, fetchWithTimeout, getWalletNameFromSources, updateWalletData, walletName]);
+
+  // Hàm fetch chính - đã giảm độ phức tạp
+  const fetchWalletData = useCallback(async (fetchFull = false) => {
+    // Kiểm tra các điều kiện tiên quyết
+    if (!multisigPDA || isFetchingRef.current || !isMountedRef.current) {
       return;
     }
 
+    const now = Date.now();
+    
+    // Kiểm tra thời gian cho phép refresh
+    if (!fetchFull && now - lastFetchTimeRef.current < REFRESH_INTERVAL) {
+      return;
+    }
+    
+    // Nếu chưa đến thời gian fetch đầy đủ, chỉ fetch balance
+    if (fetchFull && now - lastFullFetchTimeRef.current < FULL_REFRESH_INTERVAL) {
+      fetchFull = false;
+    }
+
     try {
-      // Đánh dấu đang fetch để tránh gọi đồng thời
+      // Đánh dấu đang fetch
       isFetchingRef.current = true;
       
-      const pubkey =
-        typeof multisigPDA === "string"
-          ? new PublicKey(multisigPDA)
-          : multisigPDA;
-
-      // Chỉ lấy số dư
-      const solBalance = await connection.getBalance(pubkey);
-      
-      // Cập nhật số dư nếu component vẫn mounted
-      if (isMountedRef.current) {
-        setWalletData({
-          balance: solBalance / LAMPORTS_PER_SOL,
-          // Giữ nguyên các giá trị khác
-          threshold,
-          guardianCount,
-          guardians,
-          walletName,
-        });
-        
-        // Lưu thời gian fetch lần cuối vào localStorage
-        localStorage.setItem(LAST_FETCH_TIME_KEY, now.toString());
-        lastFetchTimeRef.current = now;
+      // Chỉ set loading khi fetch đầy đủ và chưa có dữ liệu
+      if (fetchFull && balance === 0) {
+        setLoading(true);
       }
+      
+      setError(null);
+      
+      // Chuyển multisigPDA thành PublicKey
+      const pubkey = typeof multisigPDA === "string" 
+        ? new PublicKey(multisigPDA) 
+        : multisigPDA;
+
+      // Lấy số dư ví
+      const solBalance = await fetchBalanceOnly(pubkey, now);
+      
+      // Nếu chỉ fetch balance thì dừng ở đây
+      if (!fetchFull) {
+        return;
+      }
+      
+      // Fetch đầy đủ thông tin ví
+      await fetchFullWalletInfo(pubkey, now, solBalance);
+      
     } catch (err) {
       if (isMountedRef.current) {
-        console.error("Error fetching balance:", err);
-      }
-    } finally {
-      isFetchingRef.current = false;
-    }
-  }, [multisigPDA, setWalletData, threshold, guardianCount, guardians, walletName]);
-  
-  // Fetch đầy đủ thông tin ví
-  const fetchFullInfo = useCallback(async (force = false) => {
-    if (!multisigPDA || isFetchingRef.current) return;
-
-    // Kiểm tra thời gian giữa các lần fetch full info (60 giây, trừ khi force)
-    const now = Date.now();
-    if (!force && now - lastFullUpdateRef.current < 60000) {
-      // Nếu chưa đến thời gian fetch full, chỉ fetch balance
-      fetchBalance();
-      return;
-    }
-
-    // Đánh dấu đang fetch để tránh gọi đồng thời
-    isFetchingRef.current = true;
-    lastFetchTimeRef.current = now;
-    lastFullUpdateRef.current = now;
-    
-    // Tăng fetchCount để biết hook đã thực hiện fetch
-    setFetchCount(prev => prev + 1);
-    
-    if (!isMountedRef.current) {
-      isFetchingRef.current = false;
-      return;
-    }
-
-    // Chỉ đặt loading=true nếu chưa có dữ liệu ban đầu
-    if (!hasInitialDataRef.current) {
-      setLoading(true);
-    }
-    
-    setError(null);
-
-    try {
-      const pubkey =
-        typeof multisigPDA === "string"
-          ? new PublicKey(multisigPDA)
-          : multisigPDA;
-
-      // Get balance
-      const solBalance = await connection.getBalance(pubkey);
-
-      // Get and decode MultiSigWallet account data
-      const accountInfo = await connection.getAccountInfo(pubkey);
-      if (!accountInfo) {
-        throw new Error("Multisig account not found");
-      }
-      
-      // Cập nhật previous data
-      previousDataRef.current = accountInfo.data;
-
-      const multisigData = program.coder.accounts.decode(
-        "multiSigWallet",
-        accountInfo.data,
-      );
-
-      // Get guardians (chỉ khi cần thiết để giảm số lần gọi API)
-      const guardians = await getGuardiansFromBlockchain(multisigPDA);
-
-      // Lấy tên ví từ blockchain hoặc Firebase
-      let walletName = "Unnamed Wallet";
-      
-      // Thử lấy tên từ blockchain trước (có thể không có trong IDL mới)
-      if (multisigData.name) {
-        walletName = multisigData.name;
-      } else {
-        // Nếu không có trong blockchain, thử lấy từ Firebase
-        try {
-          const walletMetadata = await getWalletMetadata(pubkey.toString());
-          if (walletMetadata && walletMetadata.name) {
-            walletName = walletMetadata.name;
-          }
-        } catch (firebaseError) {
-          console.error("Error fetching wallet name from Firebase:", firebaseError);
-        }
-      }
-
-      // Chỉ cập nhật state nếu component vẫn mounted
-      if (isMountedRef.current) {
-        // Đánh dấu là đã có dữ liệu
-        hasInitialDataRef.current = true;
-        
-        setWalletData({
-          balance: solBalance / LAMPORTS_PER_SOL,
-          threshold: multisigData.threshold,
-          guardianCount: multisigData.guardianCount,
-          guardians,
-          walletName: walletName,
-        });
-
-        // Lưu thời gian fetch lần cuối vào localStorage
-        localStorage.setItem(LAST_FETCH_TIME_KEY, now.toString());
-      }
-    } catch (err) {
-      if (isMountedRef.current) {
-        console.error("Error fetching wallet info:", err);
+        console.error("Error fetching wallet data:", err);
         setError(err as Error);
       }
     } finally {
       if (isMountedRef.current) {
+        // Luôn đặt loading false khi hoàn thành
         setLoading(false);
       }
       isFetchingRef.current = false;
     }
-  }, [multisigPDA, setWalletData, setLoading, setError, fetchBalance]);
+  }, [
+    multisigPDA, 
+    setLoading, 
+    setError, 
+    balance, 
+    fetchBalanceOnly, 
+    fetchFullWalletInfo
+  ]);
 
-  // Kiểm tra xem có dữ liệu ban đầu từ localStorage không
+  // Thiết lập polling khi component mount
   useEffect(() => {
-    // Kiểm tra nếu đã có dữ liệu trong store
-    if (multisigPDA && balance > 0) {
-      hasInitialDataRef.current = true;
-    }
-  }, [multisigPDA, balance]);
-
-  // Subscribe to account changes
-  useEffect(() => {
-    // Đánh dấu component đã mount
     isMountedRef.current = true;
     
     if (!multisigPDA) return;
-
-    const pubkey =
-      typeof multisigPDA === "string"
-        ? new PublicKey(multisigPDA)
-        : multisigPDA;
     
-    // Reset các ref khi multisigPDA thay đổi
-    previousDataRef.current = null;
-    lastFetchTimeRef.current = 0;
-    lastFullUpdateRef.current = 0;
+    // Fetch dữ liệu ban đầu
+    fetchWalletData(true);
     
-    // Nếu đã có subscription, hủy nó trước
-    if (subscriptionIdRef.current !== null) {
-      connection.removeAccountChangeListener(subscriptionIdRef.current);
-      subscriptionIdRef.current = null;
-    }
-
-    // Thiết lập một subscription duy nhất
-    let timeoutId: NodeJS.Timeout | null = null;
-    
-    const subscriptionId = connection.onAccountChange(
-      pubkey,
-      (accountInfo) => {
-        // Hủy bỏ timeout trước đó nếu có
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        
-        // Kiểm tra dữ liệu mới với dữ liệu trước đó
-        const hasStructuralChange = !previousDataRef.current || 
-          accountInfo.data.length !== previousDataRef.current.length ||
-          !accountInfo.data.slice(8, 16).equals(previousDataRef.current.slice(8, 16)); // Kiểm tra thay đổi threshold và guardianCount
-          
-        // Debounce: Đặt timeout để đợi một khoảng thời gian trước khi fetch
-        timeoutId = setTimeout(() => {
-          if (isMountedRef.current) {
-            if (hasStructuralChange) {
-              // Nếu có thay đổi quan trọng, fetch đầy đủ
-              fetchFullInfo(true);
-            } else {
-              // Nếu chỉ có số dư thay đổi, chỉ fetch số dư
-              fetchBalance();
-            }
-          }
-        }, 300); // 300ms debounce
-      },
-      "confirmed",
-    );
-    
-    // Lưu ID của subscription mới
-    subscriptionIdRef.current = subscriptionId;
-
-    // Fetch dữ liệu ban đầu đầy đủ một lần
-    fetchFullInfo(true);
-
-    // Thiết lập interval để cập nhật số dư định kỳ
-    const balanceInterval = setInterval(() => {
-      if (isMountedRef.current) {
-        fetchBalance();
+    // Đảm bảo loading không bị kẹt
+    timeoutIdRef.current = setTimeout(() => {
+      if (isLoading && isMountedRef.current) {
+        console.log("Forcing loading state reset after timeout");
+        setLoading(false);
       }
-    }, 30000); // Cập nhật số dư mỗi 30 giây
-
-    // Cleanup khi component unmount hoặc dependencies thay đổi
+    }, FETCH_TIMEOUT + 1000);
+    
+    // Thiết lập interval cho việc fetch định kỳ
+    intervalIdRef.current = setInterval(() => {
+      if (isMountedRef.current && !isFetchingRef.current) {
+        // Kiểm tra xem đã đến lúc fetch đầy đủ chưa
+        const now = Date.now();
+        const shouldFetchFull = now - lastFullFetchTimeRef.current >= FULL_REFRESH_INTERVAL;
+        
+        fetchWalletData(shouldFetchFull);
+      }
+    }, REFRESH_INTERVAL);
+    
+    // Cleanup khi component unmount
     return () => {
-      // Đánh dấu component đã unmount
       isMountedRef.current = false;
       
-      // Hủy timeout nếu có
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
       }
       
-      // Hủy subscription
-      if (subscriptionIdRef.current !== null) {
-        connection.removeAccountChangeListener(subscriptionIdRef.current);
-        subscriptionIdRef.current = null;
+      if (intervalIdRef.current) {
+        clearInterval(intervalIdRef.current);
+        intervalIdRef.current = null;
       }
-      
-      // Hủy interval
-      clearInterval(balanceInterval);
     };
-  }, [multisigPDA, fetchFullInfo, fetchBalance]);
+  }, [multisigPDA, fetchWalletData, isLoading, setLoading]);
 
   const formatAddress = useCallback((address: string) => {
     if (!address) return "";
@@ -307,12 +292,11 @@ export function useWalletInfo() {
     guardians,
     walletName,
     lastUpdated,
-    isLoading: isLoading && !hasInitialDataRef.current, // Chỉ hiển thị loading nếu chưa có dữ liệu ban đầu
+    isLoading,
     error,
-    fetchCount, // Thêm để theo dõi số lần fetch
-    // Functions
-    fetchInfo: useCallback(() => fetchFullInfo(true), [fetchFullInfo]), // Force fetch
-    fetchBalance, // Thêm hàm fetch riêng cho balance
+    // Các hàm
+    fetchInfo: useCallback(() => fetchWalletData(true), [fetchWalletData]),
+    fetchBalance: useCallback(() => fetchWalletData(false), [fetchWalletData]),
     formatAddress,
   };
 }
