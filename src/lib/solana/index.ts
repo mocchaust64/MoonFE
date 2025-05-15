@@ -10,16 +10,15 @@ import IDL from "../../../idl.json";
 import { createFeePayerKeypair } from "./keypairs";
 
 // Constants
-const RPC_ENDPOINT = process.env.NEXT_PUBLIC_RPC_ENDPOINT ?? "http://localhost:8899";
-export const PROGRAM_ID = new PublicKey(IDL.address);
+const RPC_ENDPOINT = "http://localhost:8899";
 
 // Connection Configuration
 const connectionOptions = {
   commitment: "confirmed" as Commitment,
   confirmTransactionInitialTimeout: 30000,
   disableRetryOnRateLimit: false,
-  wsEndpoint: process.env.NEXT_PUBLIC_WS_ENDPOINT ?? "ws://localhost:8900",
-  useWebSocket: false,
+  wsEndpoint: "ws://localhost:8900",
+  useWebSocket: true,
   skipPreflight: true,
 };
 
@@ -50,8 +49,16 @@ const provider = new AnchorProvider(
   walletAdapter,
   connectionOptions,
 );
-export const program = new Program(IDL as Idl, provider);
+
+// ProgramID from IDL
+export const PROGRAM_ID = new PublicKey(IDL.address);
+
+// Tạo program instance cho Anchor 0.31.0
+// Trong Anchor 0.31.0, constructor của Program có các tham số:
+// 1. idl: any
+// 2. provider?: Provider (tùy chọn)
+export const program = new Program<Idl>(IDL as Idl, provider);
 
 // Re-export program types
-export type MoonWalletProgram = Program<Idl>;
+export type MoonWalletProgram = typeof program;
 export type { Idl };

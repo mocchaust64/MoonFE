@@ -16,7 +16,7 @@
 # next.js
 /.next/
 /out/
-
+/test-ledger/
 # production
 /build
 
@@ -38,3 +38,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+test-ledger/

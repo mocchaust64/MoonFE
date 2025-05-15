@@ -1,5 +1,5 @@
 {
-  "address": "5tFJskbgqrPxb992SUf6JzcQWJGbJuvsta2pRnZBcygN",
+  "address": "6Y3N5AQRQtviTrmRcf29yHWBu3ft7xEoj8kqmykDGvKP",
   "metadata": {
     "name": "moon_wallet_program",
     "version": "0.1.0",
@@ -229,6 +229,61 @@
         {
           "name": "destination",
           "writable": true
+        },
+        {
+          "name": "clock"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "proposal_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_token_proposal",
+      "discriminator": [
+        205,
+        76,
+        88,
+        177,
+        131,
+        145,
+        70,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "multisig",
+          "writable": true
+        },
+        {
+          "name": "proposal",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "from_token_account",
+          "writable": true
+        },
+        {
+          "name": "to_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program"
         },
         {
           "name": "clock"
@@ -497,72 +552,6 @@
           "type": "bool"
         }
       ]
-    },
-    {
-      "name": "verify_and_execute",
-      "discriminator": [
-        37,
-        165,
-        237,
-        189,
-        225,
-        188,
-        58,
-        41
-      ],
-      "accounts": [
-        {
-          "name": "multisig",
-          "writable": true
-        },
-        {
-          "name": "guardian"
-        },
-        {
-          "name": "clock"
-        },
-        {
-          "name": "instruction_sysvar"
-        },
-        {
-          "name": "system_program"
-        },
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "destination",
-          "writable": true
-        }
-      ],
-      "args": [
-        {
-          "name": "action",
-          "type": "string"
-        },
-        {
-          "name": "params",
-          "type": {
-            "defined": {
-              "name": "ActionParams"
-            }
-          }
-        },
-        {
-          "name": "nonce",
-          "type": "u64"
-        },
-        {
-          "name": "timestamp",
-          "type": "i64"
-        },
-        {
-          "name": "message",
-          "type": "bytes"
-        }
-      ]
     }
   ],
   "accounts": [
@@ -778,6 +767,12 @@
             "name": "token_mint",
             "type": {
               "option": "pubkey"
+            }
+          },
+          {
+            "name": "token_amount",
+            "type": {
+              "option": "u64"
             }
           }
         ]

@@ -135,7 +135,6 @@ pub fn remove_guardian(ctx: Context<RemoveGuardian>) -> Result<()> {
     Ok(())
 }
 
-// Thêm context cho việc cập nhật trạng thái guardian
 #[derive(Accounts)]
 #[instruction(guardian_id: u64, owner_guardian_id: u64, is_active: bool)]
 pub struct UpdateGuardianStatus<'info> {

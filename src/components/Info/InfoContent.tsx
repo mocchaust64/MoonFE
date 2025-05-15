@@ -56,7 +56,7 @@ export function InfoContent() {
                     {walletName || "Unnamed Wallet"}
                   </div>
                   <div className="text-muted-foreground text-sm">
-                    Moon Wallet
+                    Gokei Wallet
                   </div>
                 </div>
               </div>

@@ -4,7 +4,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { connection, program } from "@/lib/solana";
 
 import { useWalletStore } from "@/store/walletStore";
-import { getGuardiansFromBlockchain } from "@/utils/guardianUtils";
+import { getGuardiansFromBlockchain, Guardian } from "@/utils/guardianUtils";
 import { getWalletMetadata } from "@/lib/firebase/walletService";
 
 // Thời gian tối thiểu giữa các lần fetch (30 giây)
@@ -13,6 +13,14 @@ const REFRESH_INTERVAL = 30000;
 const FULL_REFRESH_INTERVAL = 300000;
 // Thời gian timeout cho mỗi request (15 giây)
 const FETCH_TIMEOUT = 15000;
+
+// Định nghĩa interface cho dữ liệu multisig account
+interface MultisigData {
+  threshold: number;
+  guardianCount: number;
+  name?: string;
+  [key: string]: unknown;
+}
 
 export function useWalletInfo() {
   const {
@@ -44,10 +52,10 @@ export function useWalletInfo() {
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
   // Hàm fetch với timeout
-  const fetchWithTimeout = useCallback(async (promise: Promise<any>) => {
+  const fetchWithTimeout = useCallback(async <T>(promise: Promise<T>): Promise<T> => {
     let timeoutId: NodeJS.Timeout | null = null;
     
-    const timeoutPromise = new Promise((_, reject) => {
+    const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
         reject(new Error("Fetch operation timed out"));
       }, FETCH_TIMEOUT);
@@ -72,7 +80,7 @@ export function useWalletInfo() {
     lastFetchTimeRef.current = now;
     
     // Chỉ cập nhật nếu có sự thay đổi đáng kể
-    if (isMountedRef.current && Math.abs(solBalance / LAMPORTS_PER_SOL - balance) > 0.00001) {
+    if (isMountedRef.current && Math.abs(solBalance - balance * LAMPORTS_PER_SOL) > 0.00001) {
       setWalletData({
         balance: solBalance / LAMPORTS_PER_SOL,
         threshold,
@@ -88,7 +96,7 @@ export function useWalletInfo() {
   // Hàm lấy tên ví từ metadata hoặc blockchain
   const getWalletNameFromSources = useCallback(async (
     pubkey: PublicKey, 
-    multisigData: any, 
+    multisigData: MultisigData, 
     currentWalletName: string
   ) => {
     // Mặc định tên wallet
@@ -121,8 +129,8 @@ export function useWalletInfo() {
   const updateWalletData = useCallback(async (
     pubkey: PublicKey, 
     solBalance: number,
-    multisigData: any,
-    updatedGuardians: any[],
+    multisigData: MultisigData,
+    updatedGuardians: Guardian[],
     updatedWalletName: string
   ) => {
     if (isMountedRef.current) {
@@ -148,7 +156,7 @@ export function useWalletInfo() {
     const multisigData = program.coder.accounts.decode(
       "multiSigWallet",
       accountInfo.data,
-    );
+    ) as MultisigData;
 
     // Lấy danh sách guardians
     if (!multisigPDA) {

@@ -30,7 +30,7 @@ export const createWebAuthnCredential = async (
   const options: PublicKeyCredentialCreationOptions = {
     challenge: challenge,
     rp: {
-      name: "Moon Wallet",
+      name: "Gokei Wallet",
       id: window.location.hostname,
     },
     user: {

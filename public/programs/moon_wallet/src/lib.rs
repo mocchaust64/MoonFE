@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::pubkey::Pubkey;
 use state::wallet::ActionParams;
 
-
-declare_id!("5tFJskbgqrPxb992SUf6JzcQWJGbJuvsta2pRnZBcygN");
+// Cập nhật version số
+declare_id!("6Y3N5AQRQtviTrmRcf29yHWBu3ft7xEoj8kqmykDGvKP");
 
 mod state;
 mod instructions;
@@ -61,18 +61,7 @@ pub mod moon_wallet_program {
         instructions::guardian::recover_access_by_guardian(ctx, recovery_hash_intermediate, new_webauthn_pubkey)
     }
 
-    pub fn verify_and_execute(
-        ctx: Context<VerifyAndExecute>,
-        action: String,
-        params: ActionParams,
-        nonce: u64,
-        timestamp: i64,
-        message: Vec<u8>
-    ) -> Result<()> {
-        instructions::wallet::verify_and_execute(ctx, action, params, nonce, timestamp, message)
-    }
-    
-  
+    // Chức năng mới: Tạo đề xuất giao dịch
     pub fn create_proposal(
         ctx: Context<CreateProposal>,
         proposal_id: u64,
@@ -84,7 +73,7 @@ pub mod moon_wallet_program {
         instructions::proposal::create_proposal(ctx, proposal_id, description, proposer_guardian_id, action, params)
     }
     
-   
+    // Chức năng mới: Phê duyệt đề xuất giao dịch
     pub fn approve_proposal(
         ctx: Context<ApproveProposal>,
         proposal_id: u64,
@@ -95,7 +84,7 @@ pub mod moon_wallet_program {
         instructions::proposal::approve_proposal(ctx, proposal_id, guardian_id, timestamp, message)
     }
     
-   
+    // Chức năng mới: Thực thi đề xuất giao dịch
     pub fn execute_proposal(
         ctx: Context<ExecuteProposal>,
         proposal_id: u64
@@ -103,7 +92,15 @@ pub mod moon_wallet_program {
         instructions::proposal::execute_proposal(ctx, proposal_id)
     }
     
- 
+    // Chức năng mới: Thực thi đề xuất chuyển token
+    pub fn execute_token_proposal(
+        ctx: Context<ExecuteTokenProposal>,
+        proposal_id: u64
+    ) -> Result<()> {
+        instructions::proposal::execute_token_proposal(ctx, proposal_id)
+    }
+    
+    // Chức năng mới: Từ chối đề xuất giao dịch
     pub fn reject_proposal(
         ctx: Context<RejectProposal>,
         proposal_id: u64,

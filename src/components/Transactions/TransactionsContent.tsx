@@ -61,8 +61,20 @@ interface TransactionItem {
 
 // Định nghĩa kiểu Proposal mở rộng với executedAt
 interface Proposal extends BaseProposal {
-  executedAt?: any;
+  executedAt?: Timestamp;
   proposalPubkey?: string;
+  params?: {
+    token_mint?: string;
+    token_amount?: number;
+    amount?: number;
+    destination?: string;
+  };
+  // Giữ lại tokenMint và extraData để tương thích, nhưng chúng ta sẽ dần loại bỏ việc sử dụng chúng
+  tokenMint?: string | null;
+  extraData?: {
+    tokenMint?: string;
+    [key: string]: unknown;
+  };
 }
 
 // Thêm hàm formatDate
@@ -309,10 +321,33 @@ export function TransactionsContent() {
       );
       
       console.log(`Đã tính PDA cho proposal ${proposal.proposalId}: ${proposalPubkey.toString()}`);
-      return {
+      
+      // Chuẩn hóa dữ liệu khi nhận proposal từ Firebase
+      const proposalWithPDA = {
         ...proposal,
         proposalPubkey: proposalPubkey.toString()
-      };
+      } as Proposal;
+      
+      // Xử lý đề xuất chuyển token đặc biệt
+      if (proposal.action === 'transfer_token') {
+        // Đảm bảo params luôn tồn tại
+        if (!proposalWithPDA.params) {
+          proposalWithPDA.params = {};
+        }
+        
+        // Chuẩn hóa thông tin token từ các vị trí khác nhau (nếu cần)
+        if (!proposalWithPDA.params.token_mint) {
+          if (typeof proposalWithPDA.tokenMint === 'string') {
+            proposalWithPDA.params.token_mint = proposalWithPDA.tokenMint;
+            console.log(`Chuẩn hóa token_mint cho proposal ${proposal.proposalId} từ proposalWithPDA.tokenMint`);
+          } else if (proposalWithPDA.extraData?.tokenMint) {
+            proposalWithPDA.params.token_mint = proposalWithPDA.extraData.tokenMint;
+            console.log(`Chuẩn hóa token_mint cho proposal ${proposal.proposalId} từ proposalWithPDA.extraData.tokenMint`);
+          }
+        }
+      }
+      
+      return proposalWithPDA;
     } catch (error) {
       console.error(`Lỗi khi tính PDA cho proposal ${proposal.proposalId}:`, error);
       return proposal as Proposal;
@@ -453,6 +488,7 @@ export function TransactionsContent() {
       console.log("Bắt đầu thực thi đề xuất:", proposal);
       console.log("ProposalId:", proposal.proposalId);
       console.log("MultisigPDA:", multisigPDA?.toString());
+      console.log("Action:", proposal.action);
 
       if (!multisigPDA) {
         toast.error("Không tìm thấy MultisigPDA");
@@ -476,7 +512,7 @@ export function TransactionsContent() {
       }
       
       // Tính ProposalPDA
-      const [proposalPDA, _] = PublicKey.findProgramAddressSync(
+      const [proposalPDA] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("proposal"),
           new PublicKey(multisigPDA.toString()).toBuffer(),
@@ -504,8 +540,22 @@ export function TransactionsContent() {
         throw new Error("Không thể tạo keypair cho fee payer. Vui lòng kiểm tra cấu hình.");
       }
       
-      // Discriminator cho execute_proposal
-      const executeProposalDiscriminator = Buffer.from([186, 60, 116, 133, 108, 128, 111, 28]);
+      // Xác định loại đề xuất để chọn instruction tương ứng
+      const isTokenTransfer = proposal.action === 'transfer_token';
+      console.log(`Loại đề xuất: ${isTokenTransfer ? 'Token Transfer' : 'SOL Transfer hoặc khác'}`);
+
+      // Debug thông tin đề xuất để xác định cấu trúc
+      console.log("Thông tin đề xuất:", {
+        action: proposal.action,
+        params: proposal.params,
+        tokenMint: proposal.params?.token_mint,
+        destination: proposal.destination
+      });
+
+      // Chọn discriminator dựa vào loại đề xuất
+      const executeDiscriminator = isTokenTransfer 
+        ? Buffer.from([205, 76, 88, 177, 131, 145, 70, 62])  // execute_token_proposal discriminator
+        : Buffer.from([186, 60, 116, 133, 108, 128, 111, 28]); // execute_proposal discriminator
       
       // Tạo dữ liệu cho tham số proposal_id
       const proposalIdBuffer = Buffer.alloc(8);
@@ -513,7 +563,7 @@ export function TransactionsContent() {
       
       // Tạo data instruction với proposal_id
       const executeData = Buffer.concat([
-        executeProposalDiscriminator,
+        executeDiscriminator,
         proposalIdBuffer
       ]);
       
@@ -521,22 +571,163 @@ export function TransactionsContent() {
       const transaction = new SolanaTransaction();
       
       try {
-        // Tạo instruction thực thi đề xuất
-        const executeInstruction = new TransactionInstruction({
-          keys: [
-            { pubkey: new PublicKey(multisigPDA.toString()), isSigner: false, isWritable: true },
-            { pubkey: proposalPDA, isSigner: false, isWritable: true },
-            { pubkey: feePayerKeypair.publicKey, isSigner: true, isWritable: true },
-            { pubkey: proposal.destination ? new PublicKey(proposal.destination) : SystemProgram.programId, isSigner: false, isWritable: true },
-            { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-          ],
-          programId: PROGRAM_ID,
-          data: executeData,
-        });
-        
-        // Thêm instruction thực thi đề xuất
-        transaction.add(executeInstruction);
+        // Tạo instruction dựa trên loại đề xuất
+        if (isTokenTransfer) {
+          /**
+           * ----- PHẦN XỬ LÝ CHUYỂN TOKEN -----
+           * 1. Lấy thông tin token mint từ proposal
+           * 2. Kiểm tra và chuẩn bị tài khoản token
+           * 3. Tạo transaction instruction
+           */
+          
+          // 1. Lấy thông tin token mint - sử dụng nguồn chính thức (proposal.params.token_mint)
+          const tokenMintAddress = proposal.params?.token_mint;
+
+          if (!tokenMintAddress) {
+            console.error("Lỗi: Không tìm thấy token mint address", {
+              proposal_id: proposal.proposalId,
+              action: proposal.action
+            });
+            throw new Error("Đề xuất chuyển token thiếu thông tin token mint. Vui lòng kiểm tra dữ liệu đề xuất.");
+          }
+
+          console.log("Token Mint được tìm thấy:", tokenMintAddress);
+          
+          // Kiểm tra địa chỉ token mint và destination có hợp lệ không
+          let tokenMint: PublicKey;
+          let destinationAddress: PublicKey;
+          
+          try {
+            tokenMint = new PublicKey(tokenMintAddress);
+          } catch {
+            console.error("Địa chỉ token mint không hợp lệ:", tokenMintAddress);
+            throw new Error("Địa chỉ token mint không hợp lệ. Vui lòng kiểm tra lại dữ liệu đề xuất.");
+          }
+          
+          if (!proposal.destination) {
+            throw new Error("Địa chỉ nhận token không được xác định trong đề xuất.");
+          }
+          
+          try {
+            destinationAddress = new PublicKey(proposal.destination);
+          } catch {
+            console.error("Địa chỉ nhận không hợp lệ:", proposal.destination);
+            throw new Error("Địa chỉ nhận token không hợp lệ. Vui lòng kiểm tra lại dữ liệu đề xuất.");
+          }
+
+          // 2. Thiết lập tài khoản token
+          const connection = getConnection();
+          const { TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
+          const { getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction } = await import('@solana/spl-token');
+          
+          // Tìm địa chỉ tài khoản token của ví multisig (from_token_account)
+          const fromTokenAccount = getAssociatedTokenAddressSync(
+            tokenMint,
+            new PublicKey(multisigPDA.toString()),
+            true  // allowOwnerOffCurve = true
+          );
+          
+          // Tìm địa chỉ tài khoản token của người nhận (to_token_account)
+          const toTokenAccount = getAssociatedTokenAddressSync(
+            tokenMint,
+            destinationAddress
+          );
+          
+          console.log("From Token Account:", fromTokenAccount.toString());
+          console.log("To Token Account:", toTokenAccount.toString());
+
+          // Kiểm tra xem tài khoản token nguồn đã tồn tại chưa
+          const fromTokenAccountInfo = await connection.getAccountInfo(fromTokenAccount);
+          if (!fromTokenAccountInfo) {
+            console.error("Tài khoản token nguồn chưa được khởi tạo:", fromTokenAccount.toString());
+            throw new Error(`Tài khoản token của multisig cho token ${tokenMintAddress} chưa được khởi tạo. Vui lòng nạp token vào ví trước khi thực hiện giao dịch chuyển token.`);
+          }
+          
+          // Kiểm tra số dư token (nếu cần)
+          try {
+            const { AccountLayout } = await import('@solana/spl-token');
+            const tokenAccountData = AccountLayout.decode(fromTokenAccountInfo.data);
+            const tokenBalance = Number(tokenAccountData.amount);
+            
+            // Lấy số lượng token cần chuyển từ đề xuất
+            let tokenAmountToTransfer = 0;
+            
+            // Ưu tiên lấy từ proposal.params.token_amount 
+            if (proposal.params?.token_amount !== undefined) {
+              tokenAmountToTransfer = Number(proposal.params.token_amount);
+            } 
+            // Nếu không có, kiểm tra trong các vị trí khác (được thêm bởi các phiên bản cũ)
+            else if (proposal.extraData?.tokenAmount !== undefined) {
+              tokenAmountToTransfer = Number(proposal.extraData.tokenAmount);
+              // Chuẩn hóa: Cập nhật vào params cho lần sau
+              if (!proposal.params) proposal.params = {};
+              proposal.params.token_amount = tokenAmountToTransfer;
+            }
+            
+            if (tokenAmountToTransfer <= 0) {
+              console.warn("Cảnh báo: Số lượng token cần chuyển là 0 hoặc không xác định.");
+            }
+            
+            console.log(`Số dư token hiện tại: ${tokenBalance}`);
+            console.log(`Số lượng token cần chuyển: ${tokenAmountToTransfer}`);
+            
+            if (tokenBalance < tokenAmountToTransfer) {
+              throw new Error(`Số dư token không đủ để thực hiện giao dịch (Cần: ${tokenAmountToTransfer}, Có: ${tokenBalance})`);
+            }
+          } catch (error) {
+            console.error("Lỗi khi kiểm tra số dư token:", error);
+            // Tiếp tục thực hiện giao dịch, để Solana kiểm tra khi thực thi
+          }
+          
+          // Kiểm tra xem tài khoản token đích đã tồn tại chưa
+          const toTokenAccountInfo = await connection.getAccountInfo(toTokenAccount);
+          if (!toTokenAccountInfo) {
+            console.log("Tạo tài khoản token đích (to_token_account)...");
+            transaction.add(
+              createAssociatedTokenAccountInstruction(
+                feePayerKeypair.publicKey,  // payer
+                toTokenAccount,              // ata
+                destinationAddress,          // owner
+                tokenMint                    // mint
+              )
+            );
+          }
+          
+          // 3. Tạo instruction cho execute_token_proposal
+          const executeTokenInstruction = new TransactionInstruction({
+            keys: [
+              { pubkey: new PublicKey(multisigPDA.toString()), isSigner: false, isWritable: true },
+              { pubkey: proposalPDA, isSigner: false, isWritable: true },
+              { pubkey: feePayerKeypair.publicKey, isSigner: true, isWritable: true },
+              { pubkey: destinationAddress, isSigner: false, isWritable: true },
+              { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+              { pubkey: toTokenAccount, isSigner: false, isWritable: true },
+              { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+            ],
+            programId: PROGRAM_ID,
+            data: executeData,
+          });
+          
+          transaction.add(executeTokenInstruction);
+        } else {
+          // Tạo instruction thông thường cho execute_proposal (chuyển SOL hoặc khác)
+          const executeInstruction = new TransactionInstruction({
+            keys: [
+              { pubkey: new PublicKey(multisigPDA.toString()), isSigner: false, isWritable: true },
+              { pubkey: proposalPDA, isSigner: false, isWritable: true },
+              { pubkey: feePayerKeypair.publicKey, isSigner: true, isWritable: true },
+              { pubkey: proposal.destination ? new PublicKey(proposal.destination) : SystemProgram.programId, isSigner: false, isWritable: true },
+              { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
+              { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+            ],
+            programId: PROGRAM_ID,
+            data: executeData,
+          });
+          
+          transaction.add(executeInstruction);
+        }
         
         // Thiết lập fee payer và blockhash
         transaction.feePayer = feePayerKeypair.publicKey;
@@ -558,18 +749,47 @@ export function TransactionsContent() {
         
         // Xác nhận giao dịch
         console.log("Đang chờ xác nhận giao dịch...");
-        await connection.confirmTransaction({
+        try {
+          const confirmation = await connection.confirmTransaction({
           signature,
           lastValidBlockHeight: await connection.getBlockHeight(),
           blockhash
         }, 'confirmed');
+          
+          // Kiểm tra xem giao dịch có lỗi không
+          if (confirmation.value?.err) {
+            console.error("Lỗi xác nhận giao dịch:", confirmation.value.err);
+            throw new Error(`Giao dịch thất bại: ${JSON.stringify(confirmation.value.err)}`);
+          }
+          
+          console.log("Giao dịch đã được xác nhận thành công!");
+          
+          // Create a copy of the proposal with updated status
+          const updatedProposal = {
+            ...proposal,
+            status: "Executed",
+            executedAt: Timestamp.now(),
+            transactionSignature: signature
+          };
+          
+          // Update the transaction in the current state immediately
+          setTransactions(prevTransactions => 
+            prevTransactions.map(tx => {
+              if (tx.proposal?.proposalId === proposal.proposalId) {
+                return {
+                  ...tx,
+                  status: "Executed",
+                  statusColor: getStatusColor("executed"),
+                  proposal: updatedProposal
+                };
+        }
+              return tx;
+            })
+          );
         
         // Cập nhật trạng thái đề xuất trong Firebase
         console.log("Cập nhật trạng thái đề xuất trong Firebase...");
-        proposal.status = "Executed";
-        proposal.executedAt = Timestamp.now();
-        proposal.transactionSignature = signature;
-        await updateProposalInFirebase(proposal);
+          await updateProposalInFirebase(updatedProposal);
         
         // Tạo explorer URL
         const explorerLink = createExplorerLink(signature);
@@ -591,11 +811,31 @@ export function TransactionsContent() {
           { duration: 6000 }
         );
         
-        // Refresh danh sách
+          // Refresh danh sách sau một khoảng thời gian ngắn
+          setTimeout(() => {
         loadProposalsFromFirebase();
+          }, 2000);
+          
         console.log("=== KẾT THÚC THỰC THI ĐỀ XUẤT ===");
+        } catch (confirmError) {
+          console.error("Lỗi khi xác nhận giao dịch:", confirmError);
+          throw new Error(`Không thể xác nhận giao dịch: ${confirmError instanceof Error ? confirmError.message : 'Lỗi không xác định'}`);
+        }
       } catch (txError) {
         console.error("Lỗi trong quá trình xử lý transaction:", txError);
+        
+        // Phân tích chi tiết lỗi liên quan đến token
+        if (isTokenTransfer) {
+          const errorMessage = txError instanceof Error ? txError.message : String(txError);
+          
+          // Xử lý các trường hợp lỗi riêng của token
+          if (errorMessage.includes("associated token account")) {
+            throw new Error("Lỗi liên quan đến tài khoản token: " + errorMessage);
+          }
+          else if (errorMessage.includes("insufficient funds")) {
+            throw new Error("Số dư token không đủ để thực hiện giao dịch");
+          }
+        }
         
         // Kiểm tra xem có phải lỗi từ RPC không
         const errorMessage = txError instanceof Error ? txError.message : String(txError);
@@ -610,7 +850,7 @@ export function TransactionsContent() {
       console.error('Lỗi khi thực thi đề xuất:', error);
       
       // Phân tích chi tiết lỗi
-      let handleBlockchainError = (error: unknown): string => {
+      const handleBlockchainError = (error: unknown): string => {
         let errorMessage = 'Lỗi không xác định';
         
         if (error instanceof Error) {
@@ -636,10 +876,25 @@ export function TransactionsContent() {
                   return 'Lỗi chương trình: Thao tác không hợp lệ';
                 case '0x177b': // 0x177b = 6011  
                   return 'Lỗi chương trình: Timestamp thuộc về tương lai';
+                case '0x177c': // 0x177c = 6012
+                  return 'Lỗi token: Không tìm thấy token mint';
+                case '0x177d': // 0x177d = 6013
+                  return 'Lỗi token: Số dư không đủ';
                 default:
                   return `Lỗi chương trình: ${errorCode}`;
               }
             }
+          }
+          
+          // Xử lý lỗi liên quan đến token
+          if (error.message.includes('token')) {
+            if (error.message.includes('balance')) {
+              return 'Số dư token không đủ để thực hiện giao dịch';
+            }
+            if (error.message.includes('account')) {
+              return 'Lỗi tài khoản token: Tài khoản không tồn tại hoặc không hợp lệ';
+            }
+            return `Lỗi liên quan đến token: ${error.message}`;
           }
         }
         
@@ -797,12 +1052,34 @@ export function TransactionsContent() {
     try {
       if (!proposal) return;
       
+      // Chuẩn hóa dữ liệu proposal trước khi cập nhật
+      if (proposal.action === 'transfer_token') {
+        // Đảm bảo params tồn tại
+        if (!proposal.params) proposal.params = {};
+        
+        // Chuẩn hóa token_mint nếu cần
+        if (!proposal.params.token_mint) {
+          if (typeof proposal.tokenMint === 'string') {
+            proposal.params.token_mint = proposal.tokenMint;
+            console.log("Normalized token_mint from tokenMint");
+          } else if (proposal.extraData?.tokenMint) {
+            proposal.params.token_mint = proposal.extraData.tokenMint;
+            console.log("Normalized token_mint from extraData");
+          }
+        }
+        
+        console.log("Normalized proposal:", {
+          action: proposal.action,
+          params: proposal.params
+        });
+      }
+      
       const signatureCount = proposal.signers?.length ?? 0;
       const requiredSignatures = proposal.requiredSignatures ?? 0;
       
       // Tự động cập nhật trạng thái nếu đủ chữ ký
       if (signatureCount >= requiredSignatures && proposal.status === "pending") {
-        console.log("Đề xuất đã đủ chữ ký, cập nhật trạng thái thành Ready");
+        console.log("Proposal has enough signatures, updating status to Ready");
         
         // Sử dụng updateProposalStatus từ lib/firebase/proposalService
         await updateProposalStatus(
@@ -827,32 +1104,43 @@ export function TransactionsContent() {
       transition={{ duration: 0.3 }}
     >
       <motion.div
-        className="flex items-center justify-between"
+        className="flex items-center justify-between mb-6"
         initial={{ y: -10 }}
         animate={{ y: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <h1 className="text-3xl font-bold">Transactions</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Transactions</h1>
         <Button
           onClick={handleManualRefresh}
           disabled={isLoading}
-          className="transition-transform hover:scale-105"
+          className="transition-all hover:scale-105 hover:shadow-md"
         >
-          {isLoading ? "Loading..." : "Refresh"}
+          {isLoading ? (
+            <span className="flex items-center">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Loading...
+            </span>
+          ) : (
+            "Refresh"
+          )}
         </Button>
       </motion.div>
 
       <motion.div
-        className="mt-8 space-y-2"
+        className="space-y-4"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.2 }}
       >
-        <div className="text-muted-foreground text-sm">All Transactions</div>
+        <div className="text-sm text-muted-foreground font-medium flex items-center">
+          <FileText className="h-4 w-4 mr-2" />
+          All Transactions
+        </div>
 
         {isLoading && (
-          <Card className="p-6">
-            <div className="flex flex-col items-center justify-center space-y-2 py-8 text-center">
+          <Card className="p-8 shadow-sm border-border/50">
+            <div className="flex flex-col items-center justify-center space-y-4 py-8 text-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary/70" />
               <div className="text-muted-foreground">
                 Loading transactions...
               </div>
@@ -861,11 +1149,11 @@ export function TransactionsContent() {
         )}
 
         {!isLoading && transactions.length === 0 && (
-          <Card className="p-6">
-            <div className="flex flex-col items-center justify-center space-y-2 py-8 text-center">
+          <Card className="p-8 shadow-sm border-border/50">
+            <div className="flex flex-col items-center justify-center space-y-4 py-8 text-center">
               <UserPlus className="text-muted-foreground/50 h-12 w-12" />
-              <h3 className="text-lg font-medium">No transactions found</h3>
-              <p className="text-muted-foreground">
+              <h3 className="text-xl font-medium">No transactions found</h3>
+              <p className="text-muted-foreground max-w-md">
                 When you add guardians or make transfers, they will appear here.
               </p>
             </div>
@@ -879,29 +1167,31 @@ export function TransactionsContent() {
               className="transition-all duration-200"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.1 }}
-              whileHover={{ scale: 1.01 }}
+              transition={{ duration: 0.3, delay: index * 0.05 }}
+              whileHover={{ scale: 1.005 }}
             >
               <Card
                 className={cn(
-                  "hover:bg-accent/50 cursor-pointer p-4 transition-colors",
-                  expandedTransactions.has(transaction.id) && "rounded-b-none",
+                  "hover:bg-accent/30 cursor-pointer p-5 transition-all shadow-sm border-border/50",
+                  expandedTransactions.has(transaction.id) && "rounded-b-none border-b-0"
                 )}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <div className="flex-shrink-0">{transaction.icon}</div>
+                    <div className="flex-shrink-0 bg-primary/10 p-2 rounded-full">
+                      {transaction.icon}
+                    </div>
                     <div>
                       <div className="font-medium">{transaction.type}</div>
                       <div className="text-muted-foreground text-sm">
-                        {transaction.type === "Transfer" ? "Transfer SOL" : "New owner"}
+                        {transaction.type === "Transfer" ? "Transfer SOL" : "New guardian"}
                       </div>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-6">
                     <div className="text-right">
-                      <div className={`text-sm ${transaction.statusColor}`}>
+                      <div className={`text-sm font-medium ${transaction.statusColor}`}>
                         {transaction.status}
                       </div>
                       <div className="text-muted-foreground text-xs">
@@ -918,7 +1208,7 @@ export function TransactionsContent() {
                           ? "Collapse details"
                           : "Expand details"
                       }
-                      className="transition-transform hover:scale-110"
+                      className="transition-transform hover:scale-110 hover:bg-accent"
                     >
                       {expandedTransactions.has(transaction.id) ? (
                         <ChevronUp className="h-4 w-4" />
@@ -928,7 +1218,6 @@ export function TransactionsContent() {
                     </Button>
                   </div>
                 </div>
-              </Card>
 
               <AnimatePresence>
                 {expandedTransactions.has(transaction.id) && (
@@ -937,99 +1226,164 @@ export function TransactionsContent() {
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.3 }}
+                      className="overflow-hidden"
                   >
-                    <Card className="bg-muted/50 rounded-t-none border-t-0 p-6">
-                      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                        <div className="space-y-4">
-                          <h3 className="text-lg font-medium">Info</h3>
-                          <div className="space-y-3">
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">
+                      <Card className="bg-muted/30 rounded-t-none p-6 shadow-inner border-t-0 border-border/50">
+                        <div className="flex flex-col lg:flex-row gap-8">
+                          <div className="space-y-5 flex-1">
+                            <h3 className="text-lg font-medium flex items-center">
+                              <FileText className="h-4 w-4 mr-2 text-primary/70" />
+                              Information
+                            </h3>
+                            <div className="space-y-3 bg-background rounded-xl p-5 shadow-sm">
+                              {transaction.type === "Transfer" ? (
+                                <>
+                                  <div className="flex flex-col space-y-5">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2">
+                                      <span className="text-muted-foreground font-medium">
+                                        From
+                                      </span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md truncate max-w-[180px] inline-block overflow-hidden">
+                                          {transaction.proposal?.multisigAddress || "Your wallet"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2">
+                                      <span className="text-muted-foreground font-medium">
+                                        To
+                                      </span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md truncate max-w-[180px] inline-block overflow-hidden">
+                                          {transaction.proposal?.destination || "Unknown"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
+                                      <span className="text-muted-foreground font-medium">
+                                        Amount
+                                      </span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="font-bold text-lg text-primary">
+                                          {(() => {
+                                            // For SOL transfers
+                                            if (transaction.proposal?.action === 'transfer') {
+                                              // Check different possible locations for amount data
+                                              const amount = transaction.proposal?.params?.amount || 
+                                                            transaction.proposal?.amount || 
+                                                            (transaction.proposal?.extraData?.amount as number);
+                                              
+                                              return amount ? `${amount} SOL` : "Unknown amount";
+                                            } 
+                                            // For token transfers
+                                            else if (transaction.proposal?.action === 'transfer_token') {
+                                              // Check different possible locations for token amount data
+                                              const tokenAmount = transaction.proposal?.params?.token_amount || 
+                                                                transaction.proposal?.extraData?.tokenAmount as number || 
+                                                                transaction.proposal?.extraData?.token_amount as number;
+                                              
+                                              // Get token mint info for display if available
+                                              const tokenMint = transaction.proposal?.params?.token_mint || 
+                                                               transaction.proposal?.tokenMint || 
+                                                               transaction.proposal?.extraData?.tokenMint as string;
+                                              
+                                              // Display token symbol if available, otherwise just show "Token"
+                                              const tokenSymbol = tokenMint ? "Token" : "Token";
+                                              
+                                              return tokenAmount ? `${tokenAmount} ${tokenSymbol}` : "Unknown amount";
+                                            }
+                                            // For other transaction types
+                                            return "N/A";
+                                          })()}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
+                                      <span className="text-muted-foreground font-medium">
+                                        Created
+                                      </span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="text-sm">{transaction.details.createdOn}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="flex flex-col space-y-5">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2">
+                                      <span className="text-muted-foreground font-medium">
                                 Guardian ID
                               </span>
-                              <span>{transaction.details.author}</span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md inline-block">
+                                          {transaction.details.author}
+                                        </span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">
-                                Created on
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
+                                      <span className="text-muted-foreground font-medium">
+                                        Created
                               </span>
-                              <span>{transaction.details.createdOn}</span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="text-sm">{transaction.details.createdOn}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
+                                      <span className="text-muted-foreground font-medium">
                                 Invite Code
                               </span>
-                              <span>{transaction.details.executedOn}</span>
+                                      <div className="md:col-span-2 text-left md:text-right">
+                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md inline-block">
+                                          {transaction.details.executedOn}
+                                        </span>
                             </div>
-                            {/* Thêm link Solana Explorer nếu có transaction signature */}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                              {/* Add Solana Explorer link if there's a transaction signature */}
                             {transaction.proposal?.transactionSignature && transaction.proposal.status === "Executed" && (
-                              <div className="flex justify-between">
-                                <span className="text-muted-foreground">
+                                <div className="flex justify-between items-center pt-3 mt-2 border-t border-border/40">
+                                  <span className="text-muted-foreground font-medium">
                                   Signature
                                 </span>
                                 <a
                                   href={createExplorerLink(transaction.proposal.transactionSignature)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-blue-500 underline hover:text-blue-700"
+                                    className="text-blue-500 underline hover:text-blue-700 font-medium flex items-center"
                                 >
-                                  Xem trên Solana Explorer
+                                    <span>View on Solana Explorer</span>
+                                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
                                 </a>
                               </div>
                             )}
                           </div>
                         </div>
 
-                        <div className="space-y-4">
-                          <h3 className="text-lg font-medium">Results</h3>
-                          <div className="grid grid-cols-3 gap-4">
-                            <motion.div
-                              className="bg-background rounded-lg p-4 text-center"
-                              whileHover={{ scale: 1.05 }}
-                              transition={{ duration: 0.2 }}
-                            >
-                              <div className="text-2xl font-bold text-green-500">
-                                {transaction.details.results.confirmed}
-                              </div>
-                              <div className="text-muted-foreground text-sm">
-                                Confirmed
-                              </div>
-                            </motion.div>
-                            <motion.div
-                              className="bg-background rounded-lg p-4 text-center"
-                              whileHover={{ scale: 1.05 }}
-                              transition={{ duration: 0.2 }}
-                            >
-                              <div className="text-2xl font-bold text-red-500">
-                                {transaction.details.results.rejected}
-                              </div>
-                              <div className="text-muted-foreground text-sm">
-                                Rejected
-                              </div>
-                            </motion.div>
-                            <motion.div
-                              className="bg-background rounded-lg p-4 text-center"
-                              whileHover={{ scale: 1.05 }}
-                              transition={{ duration: 0.2 }}
-                            >
-                              <div className="text-2xl font-bold">
-                                {transaction.details.results.threshold}
-                              </div>
-                              <div className="text-muted-foreground text-sm">
-                                Threshold
-                              </div>
-                            </motion.div>
-                          </div>
+                          <div className="space-y-4 flex-1">
+                            <h3 className="text-lg font-medium flex items-center">
+                              <ChevronUp className="h-4 w-4 mr-2 text-primary/70" />
+                              Actions
+                            </h3>
 
                           {transaction.isPendingGuardian && (
-                            <div className="mt-4 flex justify-end">
+                              <div className="flex justify-end mt-3">
                               <Button
                                 onClick={() =>
                                   handleConfirmGuardian(
                                     transaction.guardianData!,
                                   )
                                 }
-                                className="transition-transform hover:scale-105"
+                                  className="transition-all hover:scale-105 hover:shadow-md bg-primary"
                               >
                                 Confirm
                               </Button>
@@ -1039,59 +1393,110 @@ export function TransactionsContent() {
                           {/* Log debugging info */}
                           {logDebuggingInfo(transaction)}
                           
-                          {/* Phần nút hành động cho đề xuất */}
+                            {/* Action buttons for proposal */}
                           {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
-                            <div className="mt-4 space-y-2">
-                              {/* Hiển thị thông báo khi đã ký nhưng chưa đủ ngưỡng */}
+                              <div className="space-y-3 bg-background rounded-xl p-5 shadow-sm">
+                                {/* Show notification when signed but threshold not met */}
                               {hasCurrentUserSigned(transaction.proposal) && !isReadyToExecute(transaction.proposal) && (
-                                <div className="text-center text-yellow-500 text-sm mb-2">
-                                  Bạn đã ký đề xuất này. Cần thêm {getMissingSignatureCount(transaction.proposal)} chữ ký để có thể thực thi.
+                                  <div className="text-center text-yellow-600 bg-yellow-50 p-3 rounded-lg text-sm border border-yellow-200 mb-4">
+                                    You have signed this proposal. {getMissingSignatureCount(transaction.proposal)} more signature(s) needed for execution.
                                 </div>
                               )}
                               
-                              {/* Nút Ký đề xuất - Chỉ hiển thị khi chưa ký */}
-                              {!hasCurrentUserSigned(transaction.proposal) && (
+                                {/* Sign proposal button - Only show when not signed AND when proposal is not ready to execute */}
+                                {!hasCurrentUserSigned(transaction.proposal) && !isReadyToExecute(transaction.proposal) && (
                                 <Button
                                   onClick={() => handleSignProposal(transaction.proposal!)}
                                   disabled={isSigning || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
-                                  className="transition-transform hover:scale-105 w-full"
+                                    className="transition-all hover:scale-102 hover:shadow-md w-full bg-blue-600 hover:bg-blue-700"
                                 >
                                   {isSigning && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
                                     <span className="flex items-center justify-center">
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      Đang ký...
+                                        Signing...
                                     </span>
                                   ) : (
-                                    "Ký đề xuất"
+                                      "Sign Proposal"
                                   )}
                                 </Button>
                               )}
                               
-                              {/* Nút Thực thi đề xuất - Chỉ hiển thị khi đủ chữ ký */}
+                                {/* Execute proposal button - Only show when enough signatures */}
                               {isReadyToExecute(transaction.proposal) && (
                                 <Button
                                   onClick={() => handleExecuteProposal(transaction.proposal!)}
                                   disabled={isProcessing || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
-                                  className="transition-transform hover:scale-105 w-full bg-green-600 hover:bg-green-700"
+                                    className="transition-all hover:scale-102 hover:shadow-md w-full bg-green-600 hover:bg-green-700"
                                 >
                                   {isProcessing && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
                                     <span className="flex items-center justify-center">
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      Đang thực thi...
+                                        Executing...
                                     </span>
                                   ) : (
-                                    "Thực thi đề xuất"
+                                      "Execute Proposal"
                                   )}
                                 </Button>
                               )}
                             </div>
                           )}
+                            
+                            {/* Show completed status for executed transactions */}
+                            {transaction.proposal && transaction.status.toLowerCase() === "executed" && (
+                              <div className="bg-green-50 border border-green-200 rounded-xl p-5 shadow-sm">
+                                <div className="flex items-center justify-center space-x-2">
+                                  <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                  <span className="font-medium text-green-700">Transaction completed successfully</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Signature status section */}
+                            <div className="bg-background rounded-xl p-5 shadow-sm">
+                              <h4 className="text-sm font-medium mb-3 flex items-center">
+                                <ChevronUp className="h-4 w-4 mr-2 text-primary/70" />
+                                Signature Status
+                              </h4>
+                              <div className="flex flex-col space-y-4">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <div className="bg-green-100 text-green-700 h-8 w-8 rounded-full flex items-center justify-center font-semibold text-sm">
+                                      {transaction.details.results.confirmed}
+                                    </div>
+                                    <span className="text-sm text-muted-foreground">Confirmed</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="bg-red-100 text-red-700 h-8 w-8 rounded-full flex items-center justify-center font-semibold text-sm">
+                                      {transaction.details.results.rejected}
+                                    </div>
+                                    <span className="text-sm text-muted-foreground">Rejected</span>
+                                  </div>
+                                </div>
+                                
+                                <div className="flex items-center justify-between pt-2 border-t border-border/30">
+                                  <span className="text-sm font-medium">Required signatures:</span>
+                                  <div className="flex items-center gap-2">
+                                    <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-md flex items-center justify-center font-semibold text-sm">
+                                      {transaction.details.results.threshold}
+                                    </div>
+                                    {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
+                                      <span className="text-sm text-muted-foreground">
+                                        ({getMissingSignatureCount(transaction.proposal)} more needed)
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                         </div>
                       </div>
                     </Card>
                   </motion.div>
                 )}
               </AnimatePresence>
+              </Card>
             </motion.div>
           ))}
         </AnimatePresence>

@@ -10,12 +10,13 @@ pub struct MultiSigWallet {
     pub transaction_nonce: u64,      
     pub last_transaction_timestamp: i64, 
     pub owner: Pubkey,               
-    pub credential_id: String,      
+    pub credential_id: String,       
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ActionParams {
     pub amount: Option<u64>,        
     pub destination: Option<Pubkey>, 
-    pub token_mint: Option<Pubkey>, 
+    pub token_mint: Option<Pubkey>,
+    pub token_amount: Option<u64>,   
 }

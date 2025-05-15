@@ -7,7 +7,7 @@ import BN from "bn.js";
 import { sha256 } from "@noble/hashes/sha256";
 
 // Constants
-export const PROGRAM_ID = new PublicKey("5tFJskbgqrPxb992SUf6JzcQWJGbJuvsta2pRnZBcygN");
+export const PROGRAM_ID = new PublicKey("6Y3N5AQRQtviTrmRcf29yHWBu3ft7xEoj8kqmykDGvKP");
 export const SECP256R1_PROGRAM_ID = new PublicKey("Secp256r1SigVerify1111111111111111111111111");
 export const SYSVAR_INSTRUCTIONS_PUBKEY = new PublicKey("Sysvar1nstructions1111111111111111111111111");
 export const SYSVAR_CLOCK_PUBKEY = new PublicKey("SysvarC1ock11111111111111111111111111111111");

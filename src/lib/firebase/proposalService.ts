@@ -1,6 +1,6 @@
 import { 
   collection, query, where, getDocs, 
-  addDoc, updateDoc, doc, serverTimestamp,
+  addDoc, updateDoc, doc, serverTimestamp, FieldValue
 
 } from "firebase/firestore";
 import { PublicKey } from "@solana/web3.js";
@@ -14,7 +14,7 @@ export interface Proposal {
   description: string;
   action: string;
   status: string;
-  createdAt: any;
+  createdAt: FirebaseTimestamp;
   creator: string;
   signers: string[];
   requiredSignatures: number;
@@ -22,6 +22,21 @@ export interface Proposal {
   amount?: number;
   tokenMint?: string | null;
   transactionSignature?: string;
+  
+  // Thêm params chuẩn mực để lưu thông tin
+  params?: {
+    token_mint?: string;
+    token_amount?: number;
+    amount?: number;
+    destination?: string;
+  };
+}
+
+// Thêm kiểu FirebaseTimestamp để tránh sử dụng any
+interface FirebaseTimestamp {
+  toDate: () => Date;
+  seconds: number;
+  nanoseconds: number;
 }
 
 /**
@@ -166,14 +181,42 @@ export const getProposalById = async (multisigAddress: string, proposalId: numbe
 };
 
 /**
- * Tạo đề xuất mới
+ * Tạo đề xuất mới với hỗ trợ chuẩn hóa dữ liệu
  * @param proposalData Dữ liệu đề xuất
  * @returns ID của đề xuất
  */
 export const createProposal = async (proposalData: Omit<Proposal, 'id' | 'createdAt'>): Promise<string> => {
   try {
+    // Chuẩn hóa dữ liệu đề xuất trước khi lưu
+    const normalizedData = { ...proposalData };
+
+    // Đảm bảo params luôn tồn tại cho đề xuất token
+    if (normalizedData.action === 'transfer_token') {
+      if (!normalizedData.params) normalizedData.params = {};
+
+      // Nếu có tokenMint nhưng không có trong params.token_mint, sử dụng nó
+      if (normalizedData.tokenMint && !normalizedData.params.token_mint) {
+        normalizedData.params.token_mint = normalizedData.tokenMint;
+      }
+      
+      // Nếu có amount nhưng không có trong params.token_amount, sử dụng nó
+      if (normalizedData.amount !== undefined && normalizedData.params.token_amount === undefined) {
+        normalizedData.params.token_amount = normalizedData.amount;
+      }
+      
+      // Nếu có destination nhưng không có trong params.destination, sử dụng nó
+      if (normalizedData.destination && !normalizedData.params.destination) {
+        normalizedData.params.destination = normalizedData.destination;
+      }
+      
+      console.log("Đề xuất chuyển token đã được chuẩn hóa:", {
+        action: normalizedData.action,
+        params: normalizedData.params
+      });
+    }
+    
     const docRef = await addDoc(collection(db, 'proposals'), {
-      ...proposalData,
+      ...normalizedData,
       createdAt: serverTimestamp()
     });
     
@@ -211,7 +254,7 @@ export const updateProposalStatus = async (
     }
     
     const docRef = doc(db, 'proposals', querySnapshot.docs[0].id);
-    const updateData: any = { status: newStatus };
+    const updateData: { [key: string]: any } = { status: newStatus };
     
     if (transactionSignature) {
       updateData.transactionSignature = transactionSignature;

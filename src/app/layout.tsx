@@ -1,8 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
-import Header from "@/components/layout/header";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 
@@ -19,10 +18,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Moon Wallet - Your Secure Crypto Wallet",
+  title: "Gokei Wallet - Your Secure Crypto Wallet",
   description:
     "A secure and user-friendly cryptocurrency wallet for managing your digital assets",
-  viewport: "width=device-width, initial-scale=1, maximum-scale=1",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#0c1220",
 };
 
 export default function RootLayout({
@@ -31,19 +36,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="bg-background h-full">
+    <html lang="en" className="dark bg-[#0c1220] h-full">
       <body
         className={cn(
-          "min-h-screen font-sans antialiased",
+          "min-h-screen w-full font-sans antialiased overflow-x-hidden",
           geistSans.variable,
           geistMono.variable,
         )}
         suppressHydrationWarning
       >
         <ProtectedRoute>
-          <div className="flex min-h-screen flex-col">
-            <Header />
-            <main className="relative flex-1">{children}</main>
+          <div className="flex min-h-screen w-full flex-col">
+            <main className="relative flex-1 w-full">{children}</main>
           </div>
           <Toaster />
         </ProtectedRoute>

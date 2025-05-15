@@ -1,32 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Modal, 
   ModalContent, 
   ModalHeader, 
   ModalTitle, 
   ModalDescription,
-  ModalFooter
 } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2} from "lucide-react";
-import { LAMPORTS_PER_SOL, PublicKey, Connection, Transaction, TransactionInstruction, SystemProgram, SYSVAR_CLOCK_PUBKEY, Keypair } from '@solana/web3.js';
-
+import { Loader2, Send, AlertCircle, CircleDollarSign } from "lucide-react";
+import { LAMPORTS_PER_SOL, PublicKey, Connection, Keypair } from '@solana/web3.js';
 import { getWebAuthnAssertion } from '@/utils/webauthnUtils';
 import { getGuardianPDA } from '@/utils/credentialUtils';
 import { getWalletByCredentialId } from '@/lib/firebase/webAuthnService';
 import { Buffer } from 'buffer';
 import BN from 'bn.js';
-import { sha256 } from "@noble/hashes/sha256";
-import { normalizeSignatureToLowS } from '@/lib/solana/secp256r1';
 import { useWalletInfo } from "@/hooks/useWalletInfo";
-import { PROGRAM_ID } from '@/utils/constants';
-import { createSecp256r1Instruction } from '@/utils/instructionUtils';
-import { useRouter } from 'next/navigation';
 import { createProposal as saveProposalToFirebase } from '@/lib/firebase/proposalService';
-import { Timestamp } from 'firebase/firestore';
-import { derToRaw } from '@/utils/bufferUtils';
+import { createSolTransferProposal, createTokenTransferProposal } from '@/utils/transferUtils';
+import { getTokenAccounts } from '@/utils/tokenListUtils';
+import { convertToTokenAmount } from '@/utils/tokenUtils';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
 
 interface TransferModalProps {
   isOpen: boolean;
@@ -39,152 +37,13 @@ interface TransferModalProps {
   onTransferError?: (error: Error) => void;
 }
 
-// Viết hàm với param object để giảm số lượng tham số
-interface CreateProposalParams {
-  multisigPubkey: PublicKey;
-  payerPublicKey: PublicKey;
-  guardianPubkey: PublicKey;
-  guardianId: number;
-  destinationPubkey: PublicKey;
-  amountLamports: BN;
-  description: string;
-  proposalId: BN;
-  webauthnSignature: Uint8Array;
-  authenticatorData: Uint8Array;
-  clientDataJSON: Uint8Array;
-  webAuthnPubKey: Buffer;
+interface AssetOption {
+  type: 'sol' | 'token';
+  symbol: string;
+  balance: number;
+  decimals: number;
+  mint?: string;
 }
-
-// Interface để tổ chức các thông tin giao dịch
-interface TransactionInfo {
-  proposalId: BN;
-  multisigPDA: string;
-  multisigPublicKey: PublicKey;
-  guardianPDA: PublicKey;
-  destinationPublicKey: PublicKey;
-  amount: string;
-  amountLamports: BN;
-  description: string;
-  webAuthnPubKey: Buffer;
-}
-
-// Interface cho handleTransactionCheck
-interface TransactionCheckParams {
-  transactionId: string;
-  connection: Connection;
-  multisigAccountInfo: any;
-  multisigPDA: string;
-  guardianPDA: PublicKey;
-  destinationPublicKey: PublicKey;
-  proposalId: BN;
-  amount: string;
-  description: string;
-  onSuccess: (thresholdByte: number) => void;
-}
-
-// Interface cho processSuccessfulTransaction
-interface ProcessSuccessParams {
-  thresholdByte: number;
-  transactionId: string;
-  multisigPDA: string;
-  guardianPDA: PublicKey;
-  destinationPublicKey: PublicKey;
-  proposalId: BN;
-  amount: string;
-  description: string;
-}
-
-// Hàm tạo một đề xuất chuyển tiền
-const localCreateProposal = async (params: CreateProposalParams): Promise<Transaction> => {
-  // Tạo transaction
-  const tx = new Transaction();
-  
-  // 1. Tạo client data hash
-  const clientDataHash = await crypto.subtle.digest('SHA-256', params.clientDataJSON);
-  const clientDataHashBytes = new Uint8Array(clientDataHash);
-  
-  // 2. Tạo verification data
-  const verificationData = new Uint8Array(params.authenticatorData.length + clientDataHashBytes.length);
-  verificationData.set(new Uint8Array(params.authenticatorData), 0);
-  verificationData.set(clientDataHashBytes, params.authenticatorData.length);
-  
-  // 3. Convert signature từ DER sang raw format
-  const rawSignature = derToRaw(params.webauthnSignature);
-  
-  // 4. Chuẩn hóa signature về dạng Low-S
-  const normalizedSignature = normalizeSignatureToLowS(Buffer.from(rawSignature));
-  
-  // 5. Tạo secp256r1 instruction để xác thực chữ ký WebAuthn
-  const secp256r1Instruction = createSecp256r1Instruction(
-    Buffer.from(verificationData),
-    params.webAuthnPubKey,
-    normalizedSignature,
-    false
-  );
-  
-  // Thêm instruction xác thực WebAuthn vào transaction
-  tx.add(secp256r1Instruction);
-  
-  // Discriminator cho create_proposal instruction (từ IDL)
-  const createProposalDiscriminator = [132, 116, 68, 174, 216, 160, 198, 22];
-  
-  // Tạo dữ liệu cho create_proposal instruction
-  const descriptionBuffer = Buffer.from(params.description);
-  const descriptionLenBuffer = Buffer.alloc(4);
-  descriptionLenBuffer.writeUInt32LE(descriptionBuffer.length, 0);
-  
-  const actionBuffer = Buffer.from('transfer');
-  const actionLenBuffer = Buffer.alloc(4);
-  actionLenBuffer.writeUInt32LE(actionBuffer.length, 0);
-  
-  // Tạo data instruction cho create_proposal
-  const data = Buffer.concat([
-    Buffer.from(createProposalDiscriminator),
-    Buffer.from(params.proposalId.toArrayLike(Buffer, 'le', 8)),
-    Buffer.from(descriptionLenBuffer),
-    descriptionBuffer,
-    Buffer.from(new BN(params.guardianId).toArrayLike(Buffer, 'le', 8)),
-    Buffer.from(actionLenBuffer),
-    actionBuffer,
-    // ActionParams với định dạng đúng
-    // 1. amount (option<u64>): Some variant (1) + u64 value
-    Buffer.from([1]), // Some variant cho amount
-    params.amountLamports.toArrayLike(Buffer, 'le', 8),
-    // 2. destination (option<publicKey>): Some variant (1) + public key (32 bytes)
-    Buffer.from([1]), // Some variant cho destination
-    params.destinationPubkey.toBuffer(),
-    // 3. tokenMint (option<publicKey>): None variant (0)
-    Buffer.from([0]), // None variant cho tokenMint
-  ]);
-  
-  // Tính PDA cho proposal để sử dụng làm account
-  const [proposalPubkey] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from('proposal'),
-      params.multisigPubkey.toBuffer(),
-      params.proposalId.toArrayLike(Buffer, 'le', 8),
-    ],
-    PROGRAM_ID
-  );
-  
-  // Thêm instruction tạo đề xuất vào transaction
-  tx.add(
-    new TransactionInstruction({
-      keys: [
-        { pubkey: params.multisigPubkey, isSigner: false, isWritable: true },
-        { pubkey: proposalPubkey, isSigner: false, isWritable: true },
-        { pubkey: params.guardianPubkey, isSigner: false, isWritable: false },
-        { pubkey: params.payerPublicKey, isSigner: true, isWritable: true },
-        { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      programId: PROGRAM_ID,
-      data,
-    })
-  );
-  
-  return tx;
-};
 
 export function TransferModal({ 
   isOpen, 
@@ -201,597 +60,643 @@ export function TransferModal({
   const [description, setDescription] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const { multisigPDA } = useWalletInfo();
-  const router = useRouter();
-  
-  const handleDestinationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDestinationAddress(e.target.value);
-    setError(null);
-    setSuccess(null);
-  };
-  
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (value === '' || /^\d*\.?\d*$/.test(value)) {
-      setAmount(value);
-      setError(null);
-      setSuccess(null);
-    }
-  };
-  
-  const handleDescriptionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDescription(e.target.value);
-    setError(null);
-    setSuccess(null);
-  };
+  const { multisigPDA, threshold } = useWalletInfo();
 
-  // Kiểm tra đầu vào và tạo dữ liệu transaction
-  const validateInputAndCreateTransactionInfo = async (): Promise<TransactionInfo | Error> => {
-    // Kiểm tra các trường bắt buộc
-    const validationError = validateRequiredFields();
-    if (validationError) {
-      return validationError;
-    }
-    
-    // Kiểm tra số tiền
-    if (!amount || parseFloat(amount) <= 0) {
-      return new Error('Vui lòng nhập số tiền hợp lệ');
-    }
+  // State for token list and selected token
+  const [assets, setAssets] = useState<AssetOption[]>([]);
+  const [selectedAsset, setSelectedAsset] = useState<string>('sol');
 
-    const amountLamports = new BN(parseFloat(amount) * LAMPORTS_PER_SOL);
-    
-    // Kiểm tra và lấy thông tin địa chỉ đích
-    const destinationPublicKeyResult = getDestinationPublicKey();
-    if (destinationPublicKeyResult instanceof Error) {
-      return destinationPublicKeyResult;
+  // Load token list when modal opens
+  useEffect(() => {
+    if (isOpen && multisigPDA) {
+      loadTokens();
     }
-    
-    // Kiểm tra và lấy thông tin ví đa chữ ký
-    const multisigInfoResult = await getMultisigInfo();
-    if (multisigInfoResult instanceof Error) {
-      return multisigInfoResult;
-    }
-    
-    const { multisigPublicKey, guardianPDA } = multisigInfoResult;
-    
-    // Tạo proposalId từ timestamp để đảm bảo unique
-    const proposalId = new BN(Date.now());
-    
+  }, [isOpen, multisigPDA]);
+
+  // Function to load tokens
+  const loadTokens = async () => {
     try {
-      // Lấy WebAuthn public key
-      const webAuthnPubKey = await getWebAuthnPublicKey(credentialId);
-      
-      // Đảm bảo multisigPDA không phải null
       if (!multisigPDA) {
-        return new Error('Không tìm thấy địa chỉ ví đa chữ ký');
+        throw new Error('Wallet address not found');
       }
-      
-      // Tạo và trả về TransactionInfo
-      return {
-        proposalId,
-        multisigPDA: multisigPDA, // Đảm bảo multisigPDA là string
-        multisigPublicKey,
-        guardianPDA,
-        destinationPublicKey: destinationPublicKeyResult,
-        amount,
-        amountLamports,
-        description,
-        webAuthnPubKey
-      };
-    } catch (error) {
-      return error instanceof Error 
-        ? error 
-        : new Error('Lỗi không xác định khi tạo thông tin giao dịch');
-    }
-  };
-  
-  // Kiểm tra các trường bắt buộc
-  const validateRequiredFields = (): Error | null => {
-    if (!destinationAddress || !amount || !multisigPDA || !credentialId || !description) {
-      const missingFields = [];
-      if (!destinationAddress) missingFields.push('destinationAddress');
-      if (!amount) missingFields.push('amount');
-      if (!multisigPDA) missingFields.push('multisigPDA');
-      if (!credentialId) missingFields.push('credentialId');
-      if (!description) missingFields.push('description');
-      
-      return new Error(`Thiếu thông tin bắt buộc: ${missingFields.join(', ')}`);
-    }
-    
-    return null;
-  };
-  
-  // Kiểm tra và lấy thông tin địa chỉ đích
-  const getDestinationPublicKey = (): PublicKey | Error => {
-    try {
-      return new PublicKey(destinationAddress);
-    } catch (err) {
-      return new Error(`Địa chỉ đích không hợp lệ: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-  
-  // Kiểm tra và lấy thông tin ví đa chữ ký
-  const getMultisigInfo = async (): Promise<{
-    multisigPublicKey: PublicKey;
-    guardianPDA: PublicKey;
-  } | Error> => {
-    if (!multisigPDA) {
-      return new Error('Không tìm thấy địa chỉ ví đa chữ ký');
-    }
-    
-    try {
-      // Đã kiểm tra multisigPDA không phải null ở trên
       const multisigPublicKey = new PublicKey(multisigPDA);
-      const multisigAccountInfo = await connection.getAccountInfo(multisigPublicKey);
+      const tokens = await getTokenAccounts(connection, multisigPublicKey);
       
-      if (!multisigAccountInfo) {
-        return new Error('Không tìm thấy tài khoản ví đa chữ ký');
-      }
+      const assetOptions: AssetOption[] = [
+        {
+          type: 'sol',
+          symbol: 'SOL',
+          balance: walletBalance,
+          decimals: 9
+        },
+        ...tokens.map(token => ({
+          type: 'token' as const,
+          symbol: token.symbol || token.mint.slice(0, 4),
+          balance: token.balance,
+          decimals: token.decimals,
+          mint: token.mint
+        }))
+      ];
       
-      const guardianPDA = getGuardianPDA(multisigPublicKey, guardianId);
-      
-      return {
-        multisigPublicKey,
-        guardianPDA
-      };
+      setAssets(assetOptions);
     } catch (error) {
-      return new Error(`Lỗi khi xử lý địa chỉ ví đa chữ ký: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Error loading tokens:', error);
+      setError('Unable to load token list');
     }
   };
-  
-  // Lấy WebAuthn public key
-  const getWebAuthnPublicKey = async (credentialId: string): Promise<Buffer> => {
-    const credentialMapping = await getWalletByCredentialId(credentialId);
-    
-    // Kiểm tra từ firebase trước
-    if (credentialMapping?.guardianPublicKey?.length) {
-      return Buffer.from(new Uint8Array(credentialMapping.guardianPublicKey));
-    }
-    
-    // Nếu không có trong firebase, kiểm tra localStorage
-    const localStorageData = localStorage.getItem('webauthn_credential_' + credentialId);
-    if (localStorageData) {
-      try {
-        const localMapping = JSON.parse(localStorageData);
-        if (localMapping?.guardianPublicKey?.length > 0) {
-          return Buffer.from(new Uint8Array(localMapping.guardianPublicKey));
-        }
-      } catch (error) {
-        console.error('Lỗi khi parse dữ liệu từ localStorage:', error);
-        // Thêm xử lý cụ thể cho lỗi parse JSON
-        throw new Error('Không thể đọc dữ liệu WebAuthn từ localStorage: ' + (error instanceof Error ? error.message : String(error)));
-      }
-    }
-    
-    throw new Error('Không tìm thấy WebAuthn public key');
-  };
-  
-  // Tạo thông điệp xác thực và lấy WebAuthn assertion
-  const getTransactionAssertion = async (txInfo: TransactionInfo): Promise<any> => {
-    const currentTimestamp = Math.floor(Date.now() / 1000);
-    
-    // Tạo hash của public key để tạo thông điệp
-    const hashBytes = sha256(txInfo.webAuthnPubKey);
-    const hashBytesStart = hashBytes.slice(0, 6);
-    const pubkeyHashHex = Buffer.from(hashBytesStart).toString('hex');
-    
-    const messageString = `create:proposal_transfer_${txInfo.amount}_SOL_to_${destinationAddress},timestamp:${currentTimestamp},pubkey:${pubkeyHashHex}`;
-    
-    setSuccess('Vui lòng chọn khóa WebAuthn để xác thực giao dịch...');
-    
-    const assertion = await getWebAuthnAssertion(credentialId, messageString, true);
-    
-    if (!assertion) {
-      throw new Error('Lỗi khi ký tin nhắn với WebAuthn hoặc người dùng đã hủy xác thực');
-    }
-    
-    return assertion;
-  };
-  
-  // Tạo và ký transaction
-  const createAndSignTransaction = async (txInfo: TransactionInfo, assertion: any): Promise<{ tx: Transaction, transactionId: string }> => {
-    setSuccess('Đang tạo đề xuất chuyển tiền...');
-    
-    // Tạo fee payer keypair từ secret key trong biến môi trường
-    const feePayerSecretKeyStr = process.env.NEXT_PUBLIC_FEE_PAYER_SECRET_KEY ?? '';
-    const feePayerSecretKey = feePayerSecretKeyStr.split(',').map(s => parseInt(s.trim()));
-    const feePayerKeypair = Keypair.fromSecretKey(new Uint8Array(feePayerSecretKey));
-    
-    // Tạo đề xuất chuyển tiền với object params
-    const tx = await localCreateProposal({
-      multisigPubkey: txInfo.multisigPublicKey,
-      payerPublicKey: feePayerKeypair.publicKey,
-      guardianPubkey: txInfo.guardianPDA,
-      guardianId,
-      destinationPubkey: txInfo.destinationPublicKey,
-      amountLamports: txInfo.amountLamports,
-      description: txInfo.description,
-      proposalId: txInfo.proposalId,
-      webauthnSignature: assertion.signature,
-      authenticatorData: assertion.authenticatorData,
-      clientDataJSON: assertion.clientDataJSON,
-      webAuthnPubKey: txInfo.webAuthnPubKey
-    });
-    
-    // Thiết lập recent blockhash và fee payer
-    tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
-    tx.feePayer = feePayerKeypair.publicKey;
-    
-    // Ký giao dịch
-    tx.sign(feePayerKeypair);
-    
-    // Gửi transaction lên blockchain
-    const transactionId = await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false,
-      maxRetries: 5, 
-      preflightCommitment: 'confirmed'
-    });
-    
-    return { tx, transactionId };
-  };
-  
-  // Xác nhận giao dịch và xử lý kết quả
-  const confirmAndProcessTransaction = async (
-    transactionId: string,
-    txInfo: TransactionInfo,
-    multisigAccountInfo: any
-  ): Promise<void> => {
-    try {
-      console.log("Đang xác nhận giao dịch...");
-      console.log("Transaction ID:", transactionId);
 
-      const blockhashInfo = await connection.getLatestBlockhash('finalized');
-      const confirmationStatus = await connection.confirmTransaction({
-        blockhash: blockhashInfo.blockhash,
-        lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
-        signature: transactionId
-      }, 'confirmed');
-      
-      console.log("Kết quả xác nhận:", confirmationStatus);
-      
-      if (confirmationStatus.value?.err) {
-        throw new Error(`Lỗi khi xác nhận giao dịch: ${JSON.stringify(confirmationStatus.value.err)}`);
-      }
-      
-      await saveProposalToFirebaseAndUpdateUI(transactionId, txInfo, multisigAccountInfo);
-    } catch (confirmError) {
-      console.error('Lỗi xác nhận:', confirmError);
-      
-      // Sửa cách gọi callback trong handleTransactionCheck
-      handleTransactionCheck({
-        transactionId, 
-        connection, 
-        multisigAccountInfo, 
-        multisigPDA: txInfo.multisigPDA, 
-        guardianPDA: txInfo.guardianPDA, 
-        destinationPublicKey: txInfo.destinationPublicKey, 
-        proposalId: txInfo.proposalId, 
-        amount: txInfo.amount, 
-        description: txInfo.description, 
-        // Sử dụng callback không trả về Promise
-        onSuccess: (thresholdByte) => {
-          // Gọi processSuccessfulTransaction mà không return Promise
-          processSuccessfulTransaction({
-            thresholdByte,
-            transactionId, 
-            multisigPDA: txInfo.multisigPDA, 
-            guardianPDA: txInfo.guardianPDA, 
-            destinationPublicKey: txInfo.destinationPublicKey, 
-            proposalId: txInfo.proposalId, 
-            amount: txInfo.amount, 
-            description: txInfo.description
-          }).catch(error => {
-            console.error('Lỗi khi xử lý giao dịch thành công:', error);
-          });
-        }
-      });
-      
-      // Hiển thị thông báo đang chờ xác nhận
-      setSuccess(`Đã gửi giao dịch với ID: ${transactionId}. Đang chờ xác nhận...`);
-    }
-  };
-  
-  // Lưu đề xuất vào Firebase và cập nhật UI
-  const saveProposalToFirebaseAndUpdateUI = async (
-    transactionId: string,
-    txInfo: TransactionInfo,
-    multisigAccountInfo: any
-  ): Promise<void> => {
-    try {
-      // Lấy threshold từ multisig account
-      const thresholdOffset = 8; // 8 bytes (discriminator)
-      const thresholdByte = multisigAccountInfo.data[thresholdOffset];
-      
-      const proposalData = {
-        proposalId: txInfo.proposalId.toNumber(),
-        multisigAddress: txInfo.multisigPDA,
-        description: txInfo.description,
-        action: 'transfer',
-        status: 'pending',
-        createdAt: Timestamp.now(),
-        creator: txInfo.guardianPDA.toString(),
-        signers: [],
-        requiredSignatures: thresholdByte,
-        destination: txInfo.destinationPublicKey.toString(),
-        amount: parseFloat(txInfo.amount),
-        tokenMint: null,
-        transactionSignature: transactionId
-      };
-      
-      console.log("Lưu proposal vào Firebase:", proposalData);
-      
-      // Sử dụng service để lưu đề xuất
-      const docId = await saveProposalToFirebase(proposalData);
-      console.log("Đã lưu proposal vào Firebase thành công, ID:", docId);
-      
-      handleTransactionSuccess(transactionId, txInfo.amount);
-    } catch (firebaseError) {
-      console.error("Lỗi khi lưu proposal vào Firebase:", firebaseError);
-      // Không throw error ở đây vì transaction đã thành công
-      setSuccess(`Đã tạo đề xuất chuyển tiền thành công, nhưng không lưu được thông tin chi tiết. ID giao dịch: ${transactionId}`);
-      
-      // Vẫn cập nhật UI và redirect
-      setTimeout(() => {
-        onClose();
-        router.push('/transactions');
-      }, 3000);
-    }
-  };
-  
-  // Xử lý khi transaction thành công
-  const handleTransactionSuccess = (transactionId: string, amount: string): void => {
-    setSuccess(`Đã tạo đề xuất chuyển ${amount} SOL thành công! ID giao dịch: ${transactionId}`);
+  const handleAssetChange = (value: string) => {
+    setSelectedAsset(value);
     setAmount('');
-    setDestinationAddress('');
-    setDescription('');
+    setError(null);
+  };
+
+  const getSelectedAssetInfo = (): AssetOption | undefined => {
+    return assets.find(asset => 
+      asset.type === 'sol' ? selectedAsset === 'sol' : asset.mint === selectedAsset
+    );
+  };
+
+  const validateAmount = (value: string, assetInfo?: AssetOption) => {
+    if (!value || !assetInfo) return false;
+    const numValue = parseFloat(value);
     
-    if (onTransferSuccess) {
-      onTransferSuccess();
+    // Basic check: positive number and less than or equal to balance
+    if (numValue <= 0 || numValue > assetInfo.balance) {
+      return false;
     }
     
-    setTimeout(() => {
-      onClose();
-      router.push('/transactions');
-    }, 3000);
+    // Additional check for valid decimal places
+    if (assetInfo.type === 'token') {
+      // Decimal places must not exceed token decimals
+      const parts = value.split('.');
+      if (parts.length > 1 && parts[1].length > assetInfo.decimals) {
+        return false;
+      }
+    }
+    
+    return true;
+  };
+
+  const handleAmountChange = (value: string) => {
+    setAmount(value);
+    setError(null);
+    
+    const assetInfo = getSelectedAssetInfo();
+    if (!assetInfo) return;
+    
+    const numValue = parseFloat(value);
+    
+    if (isNaN(numValue) || numValue <= 0) {
+      setError('Amount must be a positive number');
+      return;
+    }
+    
+    if (numValue > assetInfo.balance) {
+      setError(`Amount exceeds current balance: ${assetInfo.balance} ${assetInfo.symbol}`);
+      return;
+    }
+    
+    if (assetInfo.type === 'token') {
+      // Check decimal precision
+      const parts = value.split('.');
+      if (parts.length > 1 && parts[1].length > assetInfo.decimals) {
+        setError(`${assetInfo.symbol} supports maximum ${assetInfo.decimals} decimal places`);
+        return;
+      }
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     setIsLoading(true);
     setError(null);
-    setSuccess(null);
-    
+
     try {
-      // Kiểm tra đầu vào và tạo dữ liệu transaction
-      const txInfoResult = await validateInputAndCreateTransactionInfo();
+      // Validate inputs
+      if (!destinationAddress || !amount || !multisigPDA || !credentialId || !description) {
+        throw new Error('Please fill in all required fields');
+      }
+
+      // Validate destination address
+      try {
+        new PublicKey(destinationAddress);
+      } catch (err) {
+        throw new Error(`Invalid wallet address: ${err instanceof Error ? err.message : 'Invalid public key'}`);
+      }
+
+      const destinationPublicKey = new PublicKey(destinationAddress);
+      const multisigPublicKey = new PublicKey(multisigPDA);
+      const guardianPDA = getGuardianPDA(multisigPublicKey, guardianId);
+      const proposalId = new BN(Date.now());
+  
+      // Get WebAuthn public key
+      const webAuthnPubKey = await getWebAuthnPublicKey(credentialId);
+      if (!webAuthnPubKey) {
+        throw new Error('Unable to retrieve WebAuthn authentication information');
+      }
+
+      // Get selected asset info
+      const assetInfo = getSelectedAssetInfo();
+      if (!assetInfo) {
+        throw new Error('Asset information not found');
+      }
+
+      // Validate amount
+      if (!validateAmount(amount, assetInfo)) {
+        throw new Error(`Invalid amount. Current balance: ${assetInfo.balance} ${assetInfo.symbol}`);
+      }
+
+      // Create message and get assertion
+      const messageString = assetInfo.type === 'sol'
+        ? `create:proposal_transfer_${amount}_SOL_to_${destinationAddress}`
+        : `create:proposal_token_transfer_${amount}_${assetInfo.symbol}_to_${destinationAddress}`;
+    
+      const assertion = await getWebAuthnAssertion(credentialId, messageString, true);
+      if (!assertion) {
+        throw new Error('Unable to get WebAuthn signature');
+      }
+
+      // Create fee payer
+      const feePayerSecretKeyStr = process.env.NEXT_PUBLIC_FEE_PAYER_SECRET_KEY ?? '';
+      const feePayerSecretKey = feePayerSecretKeyStr.split(',').map(s => parseInt(s.trim()));
+      const feePayerKeypair = Keypair.fromSecretKey(new Uint8Array(feePayerSecretKey));
+    
+      if (assetInfo.type === 'sol') {
+        // Transfer SOL
+        const amountLamports = new BN(parseFloat(amount) * LAMPORTS_PER_SOL);
+        const tx = await createSolTransferProposal({
+          multisigPubkey: multisigPublicKey,
+          payerPublicKey: feePayerKeypair.publicKey,
+          guardianPubkey: guardianPDA,
+          guardianId,
+          destinationPubkey: destinationPublicKey,
+          amountLamports,
+          description,
+          proposalId,
+          webauthnSignature: assertion.signature,
+          authenticatorData: assertion.authenticatorData,
+          clientDataJSON: assertion.clientDataJSON,
+          webAuthnPubKey
+        });
+    
+        // Set up and send transaction
+        tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+        tx.feePayer = feePayerKeypair.publicKey;
+        tx.sign(feePayerKeypair);
+    
+        const txId = await connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          maxRetries: 3,
+          preflightCommitment: 'confirmed'
+        });
+        console.log('Transaction sent:', txId);
+
+        // Wait for transaction confirmation
+        const confirmation = await connection.confirmTransaction({
+          signature: txId,
+          blockhash: tx.recentBlockhash,
+          lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight
+        });
+        
+        if (confirmation.value.err) {
+          throw new Error(`Transaction failed: ${confirmation.value.err}`);
+        }
+
+      } else {
+        // Transfer Token
+        const tokenMintPubkey = new PublicKey(assetInfo.mint!);
+        console.log('Token Mint:', assetInfo.mint);
+        console.log('Token Amount:', amount);
+        console.log('Token Decimals:', assetInfo.decimals);
+        
+        const tokenAmount = convertToTokenAmount(parseFloat(amount), assetInfo.decimals);
+        console.log('Raw Token Amount:', tokenAmount.toString());
+
+        try {
+          // Create token transfer proposal
+          const tx = await createTokenTransferProposal({
+            multisigPubkey: multisigPublicKey,
+            payerPublicKey: feePayerKeypair.publicKey,
+            guardianPubkey: guardianPDA,
+            guardianId,
+            destinationPubkey: destinationPublicKey,
+            tokenMintPubkey,
+            tokenAmount,
+            description,
+            proposalId,
+            webauthnSignature: assertion.signature,
+            authenticatorData: assertion.authenticatorData,
+            clientDataJSON: assertion.clientDataJSON,
+            webAuthnPubKey
+          });
+
+          // Set up and send transaction
+          tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+          tx.feePayer = feePayerKeypair.publicKey;
+          tx.sign(feePayerKeypair);
+
+          const txId = await connection.sendRawTransaction(tx.serialize(), {
+            skipPreflight: false,
+            maxRetries: 3,
+            preflightCommitment: 'confirmed'
+          });
+          console.log('Transaction sent:', txId);
+
+          // Wait for transaction confirmation
+          const confirmation = await connection.confirmTransaction({
+            signature: txId,
+            blockhash: tx.recentBlockhash,
+            lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight
+          });
+          
+          if (confirmation.value.err) {
+            throw new Error(`Transaction failed: ${confirmation.value.err}`);
+          }
+
+        } catch (error) {
+          if (error instanceof Error) {
+            throw new Error(`Error creating token transfer proposal: ${error.message}`);
+          }
+          throw error;
+        }
+      }
+
+      // Save proposal to Firebase after transaction is confirmed
+      await saveProposalToFirebase({
+        proposalId: proposalId.toNumber(),
+        multisigAddress: multisigPDA,
+        description,
+        action: assetInfo.type === 'sol' ? 'transfer' : 'transfer_token',
+        status: 'pending',
+        creator: guardianPDA.toString(),
+        signers: [],
+        requiredSignatures: threshold ?? 2,
+        destination: destinationPublicKey.toString(),
+        amount: parseFloat(amount),
+        tokenMint: assetInfo.type === 'token' ? assetInfo.mint : null,
+        params: assetInfo.type === 'token' ? {
+          token_mint: assetInfo.mint,
+          token_amount: parseFloat(amount),
+          destination: destinationPublicKey.toString()
+        } : {
+          amount: parseFloat(amount) * LAMPORTS_PER_SOL,
+          destination: destinationPublicKey.toString()
+        }
+      });
+
+      onTransferSuccess?.();
+      onClose();
+    } catch (err) {
+      console.error('Error in handleSubmit:', err);
       
-      if (txInfoResult instanceof Error) {
-        throw txInfoResult;
+      // Handle specific error types
+      let errorMessage = 'An unknown error occurred';
+      
+      if (err instanceof Error) {
+        // Categorize errors by group for clearer messaging
+        
+        // Group 1: Account-related errors
+        if (err.message.includes('TokenOwnerOffCurveError')) {
+          errorMessage = 'Cannot create token account for multisig wallet. Please contact admin.';
+        }
+        // Token account errors
+        else if (err.message.includes('Token account not found') || err.message.includes('initialize')) {
+          errorMessage = 'Wallet does not have a token account. Need to deposit tokens before transaction.';
+        }
+        // Not an Associated Token Account error
+        else if (err.message.includes('not an Associated Token Account')) {
+          errorMessage = 'Invalid token account. Please use an Associated Token Account.';
+        }
+        
+        // Group 2: Balance-related errors
+        else if (err.message.includes('insufficient funds') || err.message.includes('balance')) {
+          errorMessage = 'Insufficient token balance to complete transaction.';
+        }
+        
+        // Group 3: Input data errors
+        else if (err.message.includes('address') || err.message.includes('PublicKey')) {
+          errorMessage = 'Invalid wallet address. Please check again.';
+        }
+        else if (err.message.includes('token mint') || err.message.includes('tokenMint')) {
+          errorMessage = 'Invalid token mint. Please select a different token.';
+        }
+        else if (err.message.includes('amount')) {
+          errorMessage = 'Invalid amount. Please check again.';
+        }
+        
+        // Group 4: Authentication errors
+        else if (err.message.includes('WebAuthn')) {
+          errorMessage = 'WebAuthn authentication error. Please try again.';
+        }
+        
+        // Group 5: Transaction creation or sending errors
+        else if (err.message.includes('Transaction failed') || err.message.includes('rejected')) {
+          errorMessage = 'Transaction rejected by blockchain. Please try again later.';
+        }
+        else if (err.message.includes('timeout') || err.message.includes('timed out')) {
+          errorMessage = 'Transaction timed out. Network may be slow, please try again later.';
+        }
+        // Other errors
+        else {
+          errorMessage = err.message;
+        }
       }
       
-      const txInfo = txInfoResult;  // Loại bỏ type assertion không cần thiết
-      
-      // Lấy thông tin tài khoản multisig
-      const multisigAccountInfo = await connection.getAccountInfo(txInfo.multisigPublicKey);
-      if (!multisigAccountInfo) {
-        throw new Error('Không tìm thấy tài khoản ví đa chữ ký');
-      }
-      
-      // Lấy assertion từ WebAuthn
-      const assertion = await getTransactionAssertion(txInfo);
-      
-      // Tạo và ký transaction
-      const { transactionId } = await createAndSignTransaction(txInfo, assertion);
-      
-      // Xác nhận và xử lý transaction
-      await confirmAndProcessTransaction(transactionId, txInfo, multisigAccountInfo);
-      
-    } catch (error: any) {
-      setError(error.message ?? 'Đã xảy ra lỗi khi tạo đề xuất chuyển tiền');
-      
-      if (onTransferError) {
-        onTransferError(error);
-      }
+      setError(errorMessage);
+      onTransferError?.(err as Error);
     } finally {
       setIsLoading(false);
     }
   };
-  
-  const handleTransactionCheck = (params: TransactionCheckParams): void => {
-    const { 
-      transactionId, 
-      connection, 
-      multisigAccountInfo, 
-      onSuccess 
-    } = params;
-    
-    let checkCount = 0;
-    const maxChecks = 15;
-    let isCheckingComplete = false;
-    
-    // Sử dụng một hàm kiểm tra định kỳ có giới hạn thay vì setInterval vô hạn
-    const checkTransaction = async () => {
-      if (isCheckingComplete || checkCount >= maxChecks) {
-        return;
-      }
-      
-      checkCount++;
-      console.log(`Kiểm tra trạng thái lần ${checkCount}/${maxChecks}`);
-      
-      try {
-        const status = await connection.getSignatureStatus(transactionId, {searchTransactionHistory: true});
-        console.log('Trạng thái giao dịch:', status);
-        
-        if (status?.value) {
-          isCheckingComplete = true;
-          
-          if (status.value.err) {
-            setError(`Giao dịch thất bại: ${JSON.stringify(status.value.err)}`);
-          } else {
-            // Lấy threshold từ multisig account
-            const thresholdOffset = 8; // 8 bytes (discriminator)
-            const thresholdByte = multisigAccountInfo.data[thresholdOffset];
-            
-            // Gọi callback onSuccess mà không return Promise
-            onSuccess(thresholdByte);
-          }
-          return;
-        }
-        
-        if (checkCount < maxChecks) {
-          // Sử dụng setTimeout với thời gian tăng dần để giảm số lần gọi API khi chờ lâu
-          const delay = Math.min(1000 * (1 + checkCount * 0.2), 5000); // Tăng delay theo thời gian, tối đa 5s
-          setTimeout(checkTransaction, delay);
-        } else {
-          isCheckingComplete = true;
-          setError(`Không thể xác nhận trạng thái giao dịch sau ${maxChecks} lần thử. ID giao dịch: ${transactionId}`);
-        }
-      } catch (e) {
-        console.error('Lỗi khi kiểm tra trạng thái:', e);
-        if (checkCount < maxChecks) {
-          // Nếu gặp lỗi, thử lại sau một khoảng thời gian ngắn
-          setTimeout(checkTransaction, 1000);
-        } else {
-          isCheckingComplete = true;
-          setError(`Lỗi khi kiểm tra trạng thái giao dịch. ID giao dịch: ${transactionId}`);
-        }
-      }
+
+  // Helper function to get WebAuthn public key
+  const getWebAuthnPublicKey = async (credentialId: string): Promise<Buffer> => {
+    const credentialMapping = await getWalletByCredentialId(credentialId);
+    if (credentialMapping?.guardianPublicKey?.length) {
+      return Buffer.from(new Uint8Array(credentialMapping.guardianPublicKey));
+    }
+    throw new Error('WebAuthn public key not found');
+  };
+
+  // Format balance with 4 decimal places
+  const formatBalance = (balance: number): string => {
+    return balance.toLocaleString(undefined, { 
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4
+    });
+  };
+
+  // Truncate address for display
+  const truncateAddress = (address: string): string => {
+    if (!address) return '';
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  };
+
+  // Get asset color based on symbol
+  const getAssetColor = (symbol: string): string => {
+    const colorMap: Record<string, string> = {
+      'SOL': 'bg-purple-500',
+      'USDC': 'bg-blue-500',
+      'BTC': 'bg-orange-500',
+      'ETH': 'bg-indigo-500',
     };
     
-    // Bắt đầu quá trình kiểm tra
-    checkTransaction();
+    return colorMap[symbol] || 'bg-green-500';
   };
-  
-  const processSuccessfulTransaction = async (params: ProcessSuccessParams): Promise<void> => {
-    const {
-      thresholdByte,
-      transactionId,
-      multisigPDA,
-      guardianPDA,
-      destinationPublicKey,
-      proposalId,
-      amount,
-      description
-    } = params;
-    
-    try {
-      const proposalData = {
-        proposalId: proposalId.toNumber(),
-        multisigAddress: multisigPDA,
-        description: description,
-        action: 'transfer',
-        status: 'pending',
-        createdAt: Timestamp.now(),
-        creator: guardianPDA.toString(),
-        signers: [],
-        requiredSignatures: thresholdByte,
-        destination: destinationPublicKey.toString(),
-        amount: parseFloat(amount),
-        tokenMint: null,
-        transactionSignature: transactionId
-      };
-      
-      console.log("Lưu proposal vào Firebase:", proposalData);
-      
-      // Sử dụng service để lưu đề xuất
-      const docId = await saveProposalToFirebase(proposalData);
-      console.log("Đã lưu proposal vào Firebase thành công, ID:", docId);
-      
-      handleTransactionSuccess(transactionId, amount);
-    } catch (firebaseError) {
-      console.error("Lỗi khi lưu proposal vào Firebase:", firebaseError);
-      // Không throw error ở đây vì transaction đã thành công
-      setSuccess(`Đã tạo đề xuất chuyển tiền thành công, nhưng không lưu được thông tin chi tiết. ID giao dịch: ${transactionId}`);
-    }
+
+  const hasValidInputs = () => {
+    const assetInfo = getSelectedAssetInfo();
+    return (
+      !!destinationAddress && 
+      validateAmount(amount, assetInfo) && 
+      !!description
+    );
   };
 
   return (
     <Modal open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
-      <ModalContent className="sm:max-w-md">
-        <ModalHeader>
-          <ModalTitle>Chuyển SOL</ModalTitle>
-          <ModalDescription>
-            Tạo đề xuất chuyển SOL đến ví khác. Số dư hiện tại: {walletBalance.toFixed(4)} SOL
-          </ModalDescription>
+      <ModalContent className="sm:max-w-xl">
+        <ModalHeader className="border-b pb-4 bg-gradient-to-r from-primary/10 to-transparent">
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 rounded-full bg-primary/10">
+              <Send className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <ModalTitle className="text-2xl font-bold">Create Transfer Proposal</ModalTitle>
+              <ModalDescription className="text-sm text-muted-foreground mt-1 max-w-lg">
+                Request approval to transfer assets from your multisig wallet. This will require {threshold} 
+                {threshold && threshold > 1 ? ' signatures' : ' signature'} before execution.
+              </ModalDescription>
+            </div>
+          </div>
         </ModalHeader>
       
-        <form onSubmit={handleSubmit}>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="destination">Địa chỉ người nhận</Label>
-              <Input
-                id="destination"
-                placeholder="Nhập địa chỉ Solana"
-                value={destinationAddress}
-                onChange={handleDestinationChange}
-                disabled={isLoading}
-                className="font-mono"
-              />
-            </div>
-            
-            <div className="grid gap-2">
-              <Label htmlFor="amount">Số lượng (SOL)</Label>
-              <Input
-                id="amount"
-                type="text"
-                placeholder="0.0"
-                value={amount}
-                onChange={handleAmountChange}
-                disabled={isLoading}
-              />
-            </div>
-            
-            <div className="grid gap-2">
-              <Label htmlFor="description">Mô tả</Label>
-              <Input
-                id="description"
-                placeholder="Nhập mô tả cho giao dịch này"
-                value={description}
-                onChange={handleDescriptionChange}
-                disabled={isLoading}
-              />
-            </div>
-            
-            {success && (
-              <div className="text-sm text-green-600 font-medium p-2 bg-green-50 rounded">
-                {success}
+        <form onSubmit={handleSubmit} className="max-h-[70vh] overflow-y-auto">
+          <div className="p-6 space-y-6">
+            {/* Asset Selection */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-base font-medium flex items-center gap-2">
+                  <CircleDollarSign className="h-4 w-4 text-primary" />
+                  <span>Select Asset</span>
+                </h3>
+                
+                {getSelectedAssetInfo() && (
+                  <Badge variant="outline" className="font-normal">
+                    Balance: {formatBalance(getSelectedAssetInfo()!.balance)} {getSelectedAssetInfo()!.symbol}
+                  </Badge>
+                )}
               </div>
-            )}
-            
-            {error && (
-              <div className="text-sm text-red-500 font-medium p-2 bg-red-50 rounded">
-                {error}
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {assets.length === 0 ? (
+                  <Card className="border border-dashed bg-muted/40 col-span-full">
+                    <CardContent className="flex items-center justify-center p-4">
+                      <div className="text-center">
+                        <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground mb-2" />
+                        <p className="text-sm text-muted-foreground">Loading your assets...</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  assets.map((asset) => (
+                    <Card 
+                      key={asset.type === 'sol' ? 'sol' : asset.mint}
+                      className={cn(
+                        "relative overflow-hidden transition-all duration-200 cursor-pointer hover:border-primary/50 hover:shadow-sm",
+                        selectedAsset === (asset.type === 'sol' ? 'sol' : asset.mint) 
+                          ? "border-primary/70 shadow-sm bg-primary/5" 
+                          : "border bg-card"
+                      )}
+                      onClick={() => handleAssetChange(asset.type === 'sol' ? 'sol' : asset.mint!)}
+                    >
+                      <CardContent className="p-3 flex items-center gap-3">
+                        <Avatar className={cn("h-8 w-8", getAssetColor(asset.symbol))}>
+                          <AvatarFallback className="text-white font-medium">
+                            {asset.symbol.slice(0, 2)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 overflow-hidden">
+                          <div className="font-medium flex items-center gap-1">
+                            {asset.symbol}
+                            {asset.type === 'token' && (
+                              <Badge variant="outline" className="text-xs font-normal py-0">token</Badge>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatBalance(asset.balance)} available
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Transfer Details */}
+            <div className="space-y-4 pt-2">
+              <h3 className="text-base font-medium flex items-center gap-2 mb-3">
+                <Send className="h-4 w-4 text-primary" />
+                <span>Transfer Details</span>
+              </h3>
+
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="destination" className="text-sm font-medium">Recipient Address</Label>
+                    {destinationAddress && (
+                      <Badge variant="outline" className="text-xs">
+                        {truncateAddress(destinationAddress)}
+                      </Badge>
+                    )}
+                  </div>
+                  <Input
+                    id="destination"
+                    value={destinationAddress}
+                    onChange={(e) => setDestinationAddress(e.target.value)}
+                    placeholder="Enter Solana wallet address"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="amount" className="text-sm font-medium">Amount</Label>
+                    {getSelectedAssetInfo() && (
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-6 text-xs"
+                        onClick={() => handleAmountChange(getSelectedAssetInfo()!.balance.toString())}
+                      >
+                        Use Max
+                      </Button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="amount"
+                      type="number"
+                      value={amount}
+                      onChange={(e) => handleAmountChange(e.target.value)}
+                      placeholder="0.00"
+                      step="any"
+                      min="0"
+                      className="pr-16"
+                    />
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 bg-muted px-2 py-0.5 rounded text-xs font-medium">
+                      {getSelectedAssetInfo()?.symbol || 'SOL'}
+                    </div>
+                  </div>
+                  {error && (
+                    <div className="flex items-center gap-1.5 text-destructive mt-1.5">
+                      <AlertCircle className="h-4 w-4" />
+                      <p className="text-xs">{error}</p>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="description" className="text-sm font-medium">Description</Label>
+                  <Input
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Enter a description for this transaction"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    A clear description helps other signers understand the purpose of this transaction
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Transaction Summary */}
+            {hasValidInputs() && getSelectedAssetInfo() && (
+              <div className="pt-2">
+                <Card className="border bg-muted/30">
+                  <CardHeader className="pb-2 pt-4">
+                    <CardTitle className="text-sm font-medium flex justify-between items-center">
+                      <span>Transaction Summary</span>
+                      <Badge variant="outline">Pending Approval</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pb-4 text-sm space-y-3">
+                    <div className="flex items-center justify-between border-b pb-2">
+                      <span className="text-muted-foreground">Asset</span>
+                      <div className="flex items-center gap-2">
+                        <Avatar className={cn("h-5 w-5", getAssetColor(getSelectedAssetInfo()!.symbol))}>
+                          <AvatarFallback className="text-white text-xs font-medium">
+                            {getSelectedAssetInfo()!.symbol.slice(0, 2)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium">{getSelectedAssetInfo()!.symbol}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center justify-between border-b pb-2">
+                      <span className="text-muted-foreground">Amount</span>
+                      <span className="font-medium">
+                        {amount} {getSelectedAssetInfo()!.symbol}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between border-b pb-2">
+                      <span className="text-muted-foreground">To</span>
+                      <span className="font-mono text-xs">{truncateAddress(destinationAddress)}</span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Required Approvals</span>
+                      <span className="font-medium">{threshold} signature{threshold && threshold > 1 ? 's' : ''}</span>
+                    </div>
+                    
+                    <div className="mt-2 flex items-start gap-2 bg-amber-50 dark:bg-amber-950/20 p-2 rounded-md border border-dashed border-amber-200 dark:border-amber-900/50">
+                      <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-amber-700 dark:text-amber-300/90">
+                        This proposal requires {threshold} signature{threshold && threshold > 1 ? 's' : ''} before execution
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
           </div>
           
-          <ModalFooter>
+          <div className="flex items-center justify-between px-6 py-4 border-t">
             <Button 
               type="button" 
               variant="outline" 
               onClick={onClose}
               disabled={isLoading}
             >
-              Hủy
+              Cancel
             </Button>
             <Button 
               type="submit" 
-              disabled={isLoading}
+              disabled={isLoading || !hasValidInputs()}
+              className="gap-2"
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Đang xử lý...
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Processing...
                 </>
               ) : (
-                'Tạo đề xuất'
+                <>
+                  <Send className="h-4 w-4" />
+                  Create Proposal
+                </>
               )}
             </Button>
-          </ModalFooter>
+          </div>
         </form>
       </ModalContent>
     </Modal>
   );
 }
+
+
