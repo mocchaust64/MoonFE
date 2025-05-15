@@ -39,7 +39,7 @@ const NavItem = ({ href, icon, label, isActive }: NavItemProps) => (
 
 const Sidebar = () => {
   const pathname = usePathname();
-  const { multisigPDA } = useWalletInfo();
+  const { multisigPDA, balance, walletName } = useWalletInfo();
 
   const handleCopyAddress = () => {
     if (multisigPDA) {
@@ -52,6 +52,14 @@ const Sidebar = () => {
     const start = address.substring(0, 10);
     const end = address.substring(address.length - 6);
     return `${start}...${end}`;
+  };
+
+  // Format balance với 4 chữ số thập phân
+  const formatBalance = (balanceInSol: number) => {
+    return balanceInSol.toLocaleString(undefined, {
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4
+    });
   };
 
   return (
@@ -101,10 +109,10 @@ const Sidebar = () => {
               <div className="absolute -right-1 bottom-1 h-4 w-4 rounded-full bg-green-500 border-2 border-[#080808]"></div>
             </div>
             <div className="text-gray-200 text-md font-medium mt-1">
-              Digital-X0lj3
+              {walletName || "Digital-X0lj3"}
             </div>
             <div className="text-blue-500 text-xl font-semibold">
-              100.0017 <span className="text-sm text-gray-400">SOL</span>
+              {balance ? formatBalance(balance) : "0.0000"} <span className="text-sm text-gray-400">SOL</span>
             </div>
             <div className="flex items-center mt-1 bg-zinc-900/60 rounded-lg py-2 px-3 border border-zinc-800/80 w-full justify-between">
               <div className="text-xs text-gray-400 font-mono truncate">

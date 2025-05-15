@@ -140,19 +140,19 @@ export function DashboardContent() {
         />
       )}
 
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-500 to-indigo-600 bg-clip-text text-transparent">Dashboard</h1>
-        <div className="flex gap-3">
+      <div className="flex items-center justify-between mb-6 flex-col sm:flex-row gap-4 sm:gap-0">
+        <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-500 to-indigo-600 bg-clip-text text-transparent">Dashboard</h1>
+        <div className="flex gap-3 w-full sm:w-auto">
           <Button 
             variant="outline" 
-            className="bg-zinc-900/60 backdrop-blur-md border-zinc-800/60 hover:bg-zinc-800/80 text-white transition-all duration-300 shadow-lg hover:shadow-blue-500/20"
+            className="bg-zinc-900/60 backdrop-blur-md border-zinc-800/60 hover:bg-zinc-800/80 text-white transition-all duration-300 shadow-lg hover:shadow-blue-500/20 flex-1 sm:flex-none"
             onClick={handleOpenTransferModal}
           >
             <ArrowUp className="mr-2 h-4 w-4 text-blue-400" />
             Send
           </Button>
           <Button
-            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white border-0 transition-all duration-300 shadow-lg hover:shadow-blue-500/40"
+            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white border-0 transition-all duration-300 shadow-lg hover:shadow-blue-500/40 flex-1 sm:flex-none"
             onClick={handleDepositClick}
           >
             <ArrowDown className="mr-2 h-4 w-4" />
@@ -161,9 +161,9 @@ export function DashboardContent() {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-6 w-full" style={{display: 'flex', flexDirection: 'row'}}>
+      <div className="flex flex-col lg:flex-row gap-6 w-full">
         {/* Left Column - Wallet Info */}
-        <div style={{width: '65%'}} className="w-full md:w-4/5 lg:w-4/5">
+        <div className="w-full lg:w-2/3">
           <Tabs defaultValue="assets" className="w-full">
             <TabsList className="w-full bg-transparent border-b border-zinc-800/40 rounded-t-md h-12 p-1 shadow-sm">
               <TabsTrigger 
@@ -187,16 +187,16 @@ export function DashboardContent() {
                       Wallet Address
                     </div>
                     <div className="flex items-center justify-between mt-1">
-                      <div className="flex items-center bg-zinc-900/60 rounded-lg px-4 py-2 border border-zinc-800/60 w-full justify-between shadow-inner">
+                      <div className="flex items-center bg-zinc-900/60 rounded-lg px-3 sm:px-4 py-2 border border-zinc-800/60 w-full justify-between shadow-inner">
                         {multisigPDA ? (
                           <>
-                            <div className="text-sm text-blue-100 font-mono truncate pr-2">
+                            <div className="text-xs sm:text-sm text-blue-100 font-mono truncate pr-2">
                               {`EXDTV ... ZPVMbj`}
                             </div>
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 rounded-md hover:bg-zinc-800 ml-2 px-3 transition-all duration-200 hover:text-blue-400"
+                              className="h-7 rounded-md hover:bg-zinc-800 ml-1 sm:ml-2 px-2 sm:px-3 transition-all duration-200 hover:text-blue-400"
                               onClick={handleCopyAddress}
                             >
                               <span className="text-xs text-blue-500 font-medium">Copy</span>
@@ -214,10 +214,13 @@ export function DashboardContent() {
                       Balance
                     </div>
                     <div className="flex items-baseline justify-between">
-                      <div className="text-5xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
-                        100.0017
+                      <div className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
+                        {balance ? balance.toLocaleString(undefined, {
+                          minimumFractionDigits: 4,
+                          maximumFractionDigits: 4
+                        }) : '0.0000'}
                       </div>
-                      <div className="text-lg text-gray-400">SOL</div>
+                      <div className="text-base sm:text-lg text-gray-400">SOL</div>
                     </div>
                   </div>
                   
@@ -251,7 +254,7 @@ export function DashboardContent() {
         </div>
 
         {/* Right Column - Transactions and Info */}
-        <div style={{width: '35%'}} className="w-full md:w-1/5 lg:w-1/5 flex flex-col space-y-6">
+        <div className="w-full lg:w-1/3 flex flex-col space-y-6">
           {/* Transactions Section */}
           <Card className="bg-zinc-900/20 border-zinc-800/60 rounded-md overflow-hidden shadow-xl backdrop-blur-sm hover:shadow-blue-900/10 transition-all duration-300">
             <div className="flex items-center justify-between p-4 border-b border-zinc-800/60">
@@ -277,7 +280,7 @@ export function DashboardContent() {
                       <div className="w-2 h-2 bg-blue-500 rounded-full mr-1"></div>
                       <div className="text-xs text-gray-400">Active</div>
                     </div>
-                    <div className="text-xl font-bold text-white">0</div>
+                    <div className="text-lg sm:text-xl font-bold text-white">0</div>
                   </div>
                 </div>
                 <div className="bg-zinc-900/60 rounded-lg p-3 border border-zinc-800/60 shadow-inner transition-all duration-300 hover:border-yellow-900/40 hover:shadow-yellow-900/10">
@@ -313,30 +316,30 @@ export function DashboardContent() {
             <div className="p-4 space-y-4">
               <div className="flex items-center justify-between bg-zinc-900/60 rounded-lg p-3 border border-zinc-800/60 shadow-inner transition-all duration-300 hover:border-blue-900/40 hover:shadow-blue-900/10">
                 <div className="flex items-center">
-                  <div className="mr-3 p-2 bg-blue-900/40 rounded-md">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                  <div className="mr-2 sm:mr-3 p-1.5 sm:p-2 bg-blue-900/40 rounded-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
                       <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
                     </svg>
                   </div>
-                  <div className="text-sm text-white">Threshold</div>
+                  <div className="text-xs sm:text-sm text-white">Threshold</div>
                 </div>
-                <div className="text-sm font-medium bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded">
+                <div className="text-xs sm:text-sm font-medium bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded">
                   1/1
                 </div>
               </div>
               <div className="flex items-center justify-between bg-zinc-900/60 rounded-lg p-3 border border-zinc-800/60 shadow-inner transition-all duration-300 hover:border-amber-900/40 hover:shadow-amber-900/10">
                 <div className="flex items-center">
-                  <div className="mr-3 p-2 bg-amber-900/40 rounded-md">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
+                  <div className="mr-2 sm:mr-3 p-1.5 sm:p-2 bg-amber-900/40 rounded-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
                       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
                       <circle cx="9" cy="7" r="4"/>
                       <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
                       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                     </svg>
                   </div>
-                  <div className="text-sm text-white">Owners</div>
+                  <div className="text-xs sm:text-sm text-white">Owners</div>
                 </div>
-                <div className="text-sm font-medium bg-amber-900/30 text-amber-400 px-2 py-0.5 rounded">
+                <div className="text-xs sm:text-sm font-medium bg-amber-900/30 text-amber-400 px-2 py-0.5 rounded">
                   1
                 </div>
               </div>

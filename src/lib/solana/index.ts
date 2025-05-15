@@ -10,14 +10,14 @@ import IDL from "../../../idl.json";
 import { createFeePayerKeypair } from "./keypairs";
 
 // Constants
-const RPC_ENDPOINT = "http://localhost:8899";
+const RPC_ENDPOINT = "https://coyote-needed-blowfish.ngrok-free.app";
 
 // Connection Configuration
 const connectionOptions = {
   commitment: "confirmed" as Commitment,
   confirmTransactionInitialTimeout: 30000,
   disableRetryOnRateLimit: false,
-  wsEndpoint: "ws://localhost:8900",
+  wsEndpoint: "wss://5584-113-22-202-13.ngrok-free.app",
   useWebSocket: true,
   skipPreflight: true,
 };

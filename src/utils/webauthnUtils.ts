@@ -11,72 +11,151 @@ interface StoredCredential {
   createdAt: string;
 }
 
+// Thêm SafeWebAuthn wrapper để xử lý lỗi tốt hơn
+const SafeWebAuthn = {
+  // Kiểm tra hỗ trợ WebAuthn với xử lý lỗi tốt hơn
+  isSupported(): boolean {
+    try {
+      return (
+        typeof window !== 'undefined' &&
+        window.PublicKeyCredential !== undefined &&
+        typeof window.PublicKeyCredential === "function" &&
+        typeof navigator.credentials !== 'undefined' &&
+        typeof navigator.credentials.create === 'function' &&
+        typeof navigator.credentials.get === 'function'
+      );
+    } catch (error) {
+      console.error("Error checking WebAuthn support:", error);
+      return false;
+    }
+  },
+
+  // Tạo credential an toàn
+  async createCredential(options: PublicKeyCredentialCreationOptions): Promise<PublicKeyCredential | null> {
+    if (!this.isSupported()) {
+      console.warn("WebAuthn is not supported in this browser");
+      return null;
+    }
+
+    try {
+      const credential = await navigator.credentials.create({
+        publicKey: options,
+      });
+      return credential as PublicKeyCredential;
+    } catch (error) {
+      if (error instanceof DOMException) {
+        // Xử lý các lỗi cụ thể của WebAuthn
+        if (error.name === "NotAllowedError") {
+          console.error("User rejected the WebAuthn request");
+        } else if (error.name === "SecurityError") {
+          console.error("The operation is not secure (mixedContent, etc.)");
+        } else if (error.name === "NotSupportedError") {
+          console.error("This method is not supported by this device");
+        }
+      }
+      console.error("Error creating WebAuthn credential:", error);
+      throw error;
+    }
+  },
+
+  // Lấy credential an toàn
+  async getCredential(options: PublicKeyCredentialRequestOptions): Promise<PublicKeyCredential | null> {
+    if (!this.isSupported()) {
+      console.warn("WebAuthn is not supported in this browser");
+      return null;
+    }
+
+    try {
+      const credential = await navigator.credentials.get({
+        publicKey: options,
+      });
+      return credential as PublicKeyCredential;
+    } catch (error) {
+      if (error instanceof DOMException) {
+        // Xử lý các lỗi cụ thể của WebAuthn
+        if (error.name === "NotAllowedError") {
+          console.error("User rejected the WebAuthn request");
+        } else if (error.name === "SecurityError") {
+          console.error("The operation is not secure (mixedContent, etc.)");
+        } else if (error.name === "NotSupportedError") {
+          console.error("This method is not supported by this device");
+        }
+      }
+      console.error("Error getting WebAuthn credential:", error);
+      throw error;
+    }
+  }
+};
+
 /**
  * Tạo WebAuthn credential mới
  */
 export const createWebAuthnCredential = async (
   walletName: string,
 ): Promise<{ credentialId: string; publicKey: string; rawId: Uint8Array }> => {
-  if (!isWebAuthnSupported()) {
+  if (!SafeWebAuthn.isSupported()) {
     throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
   }
 
-  const challenge = new Uint8Array(32);
-  crypto.getRandomValues(challenge);
+  try {
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
 
-  const userId = new Uint8Array(16);
-  crypto.getRandomValues(userId);
+    const userId = new Uint8Array(16);
+    crypto.getRandomValues(userId);
 
-  const options: PublicKeyCredentialCreationOptions = {
-    challenge: challenge,
-    rp: {
-      name: "Gokei Wallet",
-      id: window.location.hostname,
-    },
-    user: {
-      id: userId,
-      name: walletName,
-      displayName: walletName,
-    },
-    pubKeyCredParams: [
-      { type: "public-key", alg: -7 },
-      { type: "public-key", alg: -257 },
-    ],
-    authenticatorSelection: {
-      authenticatorAttachment: "platform",
-      userVerification: "preferred",
-      requireResidentKey: true,
-    },
-    timeout: 60000,
-    attestation: "direct",
-  };
+    const options: PublicKeyCredentialCreationOptions = {
+      challenge: challenge,
+      rp: {
+        name: "Gokei Wallet",
+        id: window.location.hostname,
+      },
+      user: {
+        id: userId,
+        name: walletName,
+        displayName: walletName,
+      },
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 },
+        { type: "public-key", alg: -257 },
+      ],
+      authenticatorSelection: {
+        authenticatorAttachment: "platform",
+        userVerification: "preferred",
+        requireResidentKey: true,
+      },
+      timeout: 60000,
+      attestation: "direct",
+    };
 
-  const credential = (await navigator.credentials.create({
-    publicKey: options,
-  })) as PublicKeyCredential;
+    const credential = await SafeWebAuthn.createCredential(options);
 
-  if (!credential) {
-    throw new Error("Không thể tạo khóa WebAuthn");
+    if (!credential) {
+      throw new Error("Không thể tạo khóa WebAuthn");
+    }
+
+    const response = credential.response as AuthenticatorAttestationResponse;
+
+    const attestationBuffer = new Uint8Array(response.attestationObject);
+    const attestationObject = CBOR.decode(attestationBuffer.buffer);
+
+    const credentialId = bufferToHex(credential.rawId);
+
+    const authData = attestationObject.authData;
+    const publicKeyBytes = extractPublicKeyFromAuthData(authData);
+    const publicKey = bufferToHex(publicKeyBytes);
+
+    saveCredentialInfo(credentialId, publicKey, userId, walletName);
+
+    return {
+      credentialId,
+      publicKey,
+      rawId: new Uint8Array(credential.rawId),
+    };
+  } catch (error) {
+    console.error("Error in createWebAuthnCredential:", error);
+    throw new Error(`Không thể tạo khóa WebAuthn: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  const response = credential.response as AuthenticatorAttestationResponse;
-
-  const attestationBuffer = new Uint8Array(response.attestationObject);
-  const attestationObject = CBOR.decode(attestationBuffer.buffer);
-
-  const credentialId = bufferToHex(credential.rawId);
-
-  const authData = attestationObject.authData;
-  const publicKeyBytes = extractPublicKeyFromAuthData(authData);
-  const publicKey = bufferToHex(publicKeyBytes);
-
-  saveCredentialInfo(credentialId, publicKey, userId, walletName);
-
-  return {
-    credentialId,
-    publicKey,
-    rawId: new Uint8Array(credential.rawId),
-  };
 };
 
 /**
@@ -133,7 +212,7 @@ export const getWebAuthnCredential = async (
   authenticatorData: Uint8Array;
   clientDataJSON: Uint8Array;
 }> => {
-  if (!isWebAuthnSupported()) {
+  if (!SafeWebAuthn.isSupported()) {
     throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
   }
 
@@ -154,9 +233,11 @@ export const getWebAuthnCredential = async (
     timeout: 60000,
   };
 
-  const assertion = (await navigator.credentials.get({
-    publicKey: options,
-  })) as PublicKeyCredential;
+  const assertion = await SafeWebAuthn.getCredential(options);
+
+  if (!assertion) {
+    throw new Error("Không thể lấy thông tin xác thực WebAuthn");
+  }
 
   const response = assertion.response as AuthenticatorAssertionResponse;
 
@@ -171,10 +252,7 @@ export const getWebAuthnCredential = async (
  * Kiểm tra xem WebAuthn có được hỗ trợ không
  */
 export const isWebAuthnSupported = (): boolean => {
-  return (
-    window.PublicKeyCredential !== undefined &&
-    typeof window.PublicKeyCredential === "function"
-  );
+  return SafeWebAuthn.isSupported();
 };
 
 // Chạy thử một số tùy chọn để kiểm tra khả năng tương thích
@@ -185,11 +263,16 @@ export const checkWebAuthnCompatibility = async (): Promise<string> => {
 
   try {
     // Kiểm tra xem trình duyệt có hỗ trợ thuộc tính "isUserVerifyingPlatformAuthenticatorAvailable"
-    if (PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
-      const available =
-        await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      if (!available) {
-        return "Thiết bị này không có xác thực sinh trắc học được hỗ trợ";
+    if (typeof PublicKeyCredential !== 'undefined' && 
+        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      try {
+        const available =
+          await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (!available) {
+          return "Thiết bị này không có xác thực sinh trắc học được hỗ trợ";
+        }
+      } catch (error) {
+        return "Không thể kiểm tra authenticator: " + (error instanceof Error ? error.message : String(error));
       }
     }
 
@@ -335,7 +418,7 @@ export const getWebAuthnAssertion = async (
   clientDataJSON: Uint8Array;
   pubKey?: Uint8Array;
 }> => {
-  if (!isWebAuthnSupported()) {
+  if (!SafeWebAuthn.isSupported()) {
     throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
   }
 
@@ -356,9 +439,7 @@ export const getWebAuthnAssertion = async (
     allowCredentials: createAllowCredentialsOptions(credentialId, allowEmpty, credentials)
   };
 
-  const assertion = (await navigator.credentials.get({
-    publicKey: options,
-  })) as PublicKeyCredential;
+  const assertion = await SafeWebAuthn.getCredential(options);
 
   const response = assertion.response as AuthenticatorAssertionResponse;
   
@@ -416,7 +497,7 @@ export const getWebAuthnAssertionForLogin = async (
   error?: string;
 }> => {
   try {
-    if (!isWebAuthnSupported()) {
+    if (!SafeWebAuthn.isSupported()) {
       throw new Error("WebAuthn không được hỗ trợ trên trình duyệt này");
     }
 
@@ -445,9 +526,7 @@ export const getWebAuthnAssertionForLogin = async (
       throw new Error("Credential ID không được cung cấp");
     }
 
-    const assertion = (await navigator.credentials.get({
-      publicKey: options,
-    })) as PublicKeyCredential;
+    const assertion = await SafeWebAuthn.getCredential(options);
 
     if (!assertion) {
       throw new Error("Không thể lấy thông tin xác thực WebAuthn");

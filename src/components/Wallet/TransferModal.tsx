@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Modal, 
   ModalContent, 
@@ -61,6 +61,7 @@ export function TransferModal({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { multisigPDA, threshold } = useWalletInfo();
+  const proposalIdTimestamp = useRef<number>(0);
 
   // State for token list and selected token
   const [assets, setAssets] = useState<AssetOption[]>([]);
@@ -70,6 +71,8 @@ export function TransferModal({
   useEffect(() => {
     if (isOpen && multisigPDA) {
       loadTokens();
+      // Set timestamp for proposal ID when modal opens
+      proposalIdTimestamp.current = Date.now();
     }
   }, [isOpen, multisigPDA]);
 
@@ -188,7 +191,8 @@ export function TransferModal({
       const destinationPublicKey = new PublicKey(destinationAddress);
       const multisigPublicKey = new PublicKey(multisigPDA);
       const guardianPDA = getGuardianPDA(multisigPublicKey, guardianId);
-      const proposalId = new BN(Date.now());
+      // Sử dụng giá trị timestamp đã được lưu trong useRef
+      const proposalId = new BN(proposalIdTimestamp.current);
   
       // Get WebAuthn public key
       const webAuthnPubKey = await getWebAuthnPublicKey(credentialId);
@@ -456,14 +460,14 @@ export function TransferModal({
 
   return (
     <Modal open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
-      <ModalContent className="sm:max-w-xl">
-        <ModalHeader className="border-b pb-4 bg-gradient-to-r from-primary/10 to-transparent">
+      <ModalContent className="sm:max-w-xl max-h-[90vh] flex flex-col">
+        <ModalHeader className="border-b pb-4 bg-gradient-to-r from-primary/10 to-transparent flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-1.5 rounded-full bg-primary/10">
               <Send className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <ModalTitle className="text-2xl font-bold">Create Transfer Proposal</ModalTitle>
+              <ModalTitle className="text-xl sm:text-2xl font-bold">Create Transfer Proposal</ModalTitle>
               <ModalDescription className="text-sm text-muted-foreground mt-1 max-w-lg">
                 Request approval to transfer assets from your multisig wallet. This will require {threshold} 
                 {threshold && threshold > 1 ? ' signatures' : ' signature'} before execution.
@@ -472,8 +476,8 @@ export function TransferModal({
           </div>
         </ModalHeader>
       
-        <form onSubmit={handleSubmit} className="max-h-[70vh] overflow-y-auto">
-          <div className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 overflow-y-auto flex-1">
             {/* Asset Selection */}
             <div className="space-y-3">
               <div className="flex items-center justify-between mb-2">
@@ -614,9 +618,9 @@ export function TransferModal({
               </div>
             </div>
 
-            {/* Transaction Summary */}
+            {/* Transaction Summary - Chỉ hiển thị trên màn hình lớn */}
             {hasValidInputs() && getSelectedAssetInfo() && (
-              <div className="pt-2">
+              <div className="pt-2 hidden md:block">
                 <Card className="border bg-muted/30">
                   <CardHeader className="pb-2 pt-4">
                     <CardTitle className="text-sm font-medium flex justify-between items-center">
@@ -666,28 +670,31 @@ export function TransferModal({
             )}
           </div>
           
-          <div className="flex items-center justify-between px-6 py-4 border-t">
+          <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-t mt-auto">
             <Button 
               type="button" 
               variant="outline" 
               onClick={onClose}
               disabled={isLoading}
+              size="sm"
+              className="sm:size-default"
             >
               Cancel
             </Button>
             <Button 
               type="submit" 
               disabled={isLoading || !hasValidInputs()}
-              className="gap-2"
+              size="sm"
+              className="gap-1 sm:gap-2"
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
                   Processing...
                 </>
               ) : (
                 <>
-                  <Send className="h-4 w-4" />
+                  <Send className="h-3 w-3 sm:h-4 sm:w-4" />
                   Create Proposal
                 </>
               )}
