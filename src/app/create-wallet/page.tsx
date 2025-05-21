@@ -22,7 +22,7 @@ export default function CreateWalletPage() {
           <h1 className="bg-gradient-to-r from-blue-500 to-blue-600 bg-clip-text text-2xl font-bold text-transparent">
             Create New Wallet
           </h1>
-          <p className="mt-1 text-sm text-[#64748B]">
+          <p className="mt-1 text-sm text-gray-500">
             Set up your secure multi-signature wallet
           </p>
         </motion.div>
@@ -37,7 +37,7 @@ export default function CreateWalletPage() {
         </motion.div>
 
         <motion.div
-          className="mt-4 text-center text-xs text-[#64748B]"
+          className="mt-4 text-center text-xs text-gray-500"
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.3 }}

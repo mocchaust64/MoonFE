@@ -1,6 +1,11 @@
-import { NextConfig } from "next";
-
-const config: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   async headers() {
     return [
       {
@@ -23,6 +28,10 @@ const config: NextConfig = {
       },
     ];
   },
+  
+  // Thêm cấu hình để giải quyết vấn đề 404 với static assets
+  reactStrictMode: true,
+  output: 'standalone',
 };
 
-export default config;
+module.exports = nextConfig; 

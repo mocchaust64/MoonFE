@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
@@ -19,17 +19,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Moon Wallet - Your Secure Crypto Wallet",
+  title: "Gokei Wallet - Your Secure Crypto Wallet",
   description:
     "A secure and user-friendly cryptocurrency wallet for managing your digital assets",
-  viewport: "width=device-width, initial-scale=1, maximum-scale=1",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en" className="bg-background h-full">
       <body

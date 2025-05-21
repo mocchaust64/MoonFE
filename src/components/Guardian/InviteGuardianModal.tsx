@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/modal";
 import { saveInvitation } from "@/lib/firebase/guardianService";
 import { connection } from "@/lib/solana";
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 import { getGuardianPDA } from "@/utils/credentialUtils";
 
 interface InviteGuardianModalProps {
@@ -27,8 +27,8 @@ interface InviteGuardianModalProps {
 export function InviteGuardianModal({
   open,
   onOpenChange,
-}: InviteGuardianModalProps) {
-  const { multisigPDA, walletName } = useWalletStore();
+}: Readonly<InviteGuardianModalProps>) {
+  const { multisigPDA, walletName } = useWalletInfo();
   const [inviteLink, setInviteLink] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,16 +50,41 @@ export function InviteGuardianModal({
 
     // Convert string to PublicKey object
     const multisigPublicKey = new PublicKey(multisigPDA);
-
+    
+    // Tạo set để lưu các ID đã được sử dụng (từ blockchain và Firebase)
+    const usedIds = new Set<number>();
+    
+    // 1. Kiểm tra từ blockchain
     for (let i = 1; i <= 8; i++) {
       const guardianPDA = getGuardianPDA(multisigPublicKey, i);
       const guardianAccount = await connection.getAccountInfo(guardianPDA);
-      if (!guardianAccount) {
+      if (guardianAccount) {
+        usedIds.add(i);
+      }
+    }
+    
+    // 2. Kiểm tra từ Firebase - các guardian đang trong trạng thái "pending"
+    try {
+      const { getPendingGuardianIds } = await import("@/lib/firebase/guardianService");
+      const pendingGuardianIds = await getPendingGuardianIds(multisigPDA.toString());
+      
+      // Thêm tất cả pending IDs vào set đã sử dụng
+      pendingGuardianIds.forEach((id: number) => usedIds.add(id));
+      
+      console.log("Guardian IDs đã được sử dụng:", Array.from(usedIds));
+    } catch (error) {
+      console.error("Lỗi khi lấy pending guardian IDs từ Firebase:", error);
+      // Tiếp tục xử lý với các ID đã biết từ blockchain
+    }
+    
+    // 3. Tìm ID nhỏ nhất chưa được sử dụng
+    for (let i = 1; i <= 8; i++) {
+      if (!usedIds.has(i)) {
         return i;
       }
     }
 
-    throw new Error("Maximum number of guardians reached");
+    throw new Error("Đã đạt đến số lượng guardian tối đa (8)");
   };
 
   const generateGuardianInvite = async () => {
@@ -82,6 +107,7 @@ export function InviteGuardianModal({
         guardianId: newGuardianId,
         status: "pending",
         walletName: walletName || "Unnamed Wallet",
+        threshold: 1,
       });
 
       setInviteLink(newInviteLink);
@@ -130,11 +156,17 @@ export function InviteGuardianModal({
 
               {/* Invitation Link */}
               <div className="space-y-1.5">
-                <label className="text-sm leading-none font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                <label 
+                  htmlFor="invitation-link" 
+                  className="text-sm leading-none font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
                   Invitation Link
                 </label>
                 <div className="flex items-center gap-2">
-                  <div className="bg-muted flex-1 overflow-hidden rounded-md p-2.5">
+                  <div 
+                    id="invitation-link"
+                    className="bg-muted flex-1 overflow-hidden rounded-md p-2.5"
+                  >
                     <div className="font-mono text-sm break-all">
                       {inviteLink}
                     </div>

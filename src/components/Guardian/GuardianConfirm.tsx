@@ -7,7 +7,7 @@ import {
   getGuardianData,
   updateGuardianStatus,
 } from "@/lib/firebase/guardianService";
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 import { GuardianData } from "@/types/guardian";
 import { getGuardianPDA } from "@/utils/credentialUtils";
 
@@ -24,7 +24,7 @@ export function GuardianConfirm({
   onConfirm,
   guardian,
 }: GuardianConfirmProps) {
-  const { multisigPDA } = useWalletStore();
+  const { multisigPDA } = useWalletInfo();
   const [isLoading, setIsLoading] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
 
@@ -70,10 +70,13 @@ export function GuardianConfirm({
         },
         body: JSON.stringify({
           guardianId: guardianData.guardianId,
+          guardianName: guardian?.guardianName || `Guardian ${guardianData.guardianId}`,
           recoveryHashIntermediate: guardianData.hashedRecoveryBytes,
           webauthnPubkey: guardianData.webauthnPublicKey,
+          webauthnCredentialId: guardianData.webauthnCredentialId,
           multisigPDA: multisigPDA,
-          guardianPDA: guardianPDA.toString(),
+          isOwner: true,
+          inviteCode: guardian.inviteCode
         }),
       });
 

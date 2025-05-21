@@ -14,7 +14,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 
 interface NavItemProps {
   href: string;
@@ -38,7 +38,7 @@ const NavItem = ({ href, icon, label, isActive }: NavItemProps) => (
 
 const Sidebar = () => {
   // Lấy thông tin cần thiết từ store
-  const { multisigPDA, balance, walletName } = useWalletStore();
+  const { multisigPDA, balance, walletName } = useWalletInfo();
 
   const handleCopyAddress = () => {
     if (multisigPDA) {
@@ -79,7 +79,10 @@ const Sidebar = () => {
               {walletName || "Unnamed Wallet"}
             </div>
             <div className="text-muted-foreground text-sm">
-              {balance.toFixed(4)} SOL
+              {balance.toLocaleString(undefined, {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 4
+              })} SOL
             </div>
             <TooltipProvider>
               <Tooltip>
@@ -126,6 +129,6 @@ const Sidebar = () => {
       </nav>
     </div>
   );
-};
+}
 
 export default Sidebar;

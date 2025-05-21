@@ -4,7 +4,6 @@ import { PublicKey } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import { getWalletByCredentialId } from "@/lib/firebase/webAuthnService";
 import { connection } from "@/lib/solana";
@@ -61,12 +60,23 @@ export default function LoginWallet() {
 
       // 6. Login thành công
       console.log("Login thành công với ví:", multisigPDA.toString());
+
+      // Lưu thông tin credential và guardianId vào localStorage
+      localStorage.setItem('current_credential_id', rawIdBase64);
+      
+      // Lấy thông tin guardian từ Firebase để lưu guardianId
+      const credentialInfo = await getWalletByCredentialId(rawIdBase64);
+      if (credentialInfo && credentialInfo.guardianId !== undefined) {
+        console.log("Lưu guardianId vào localStorage:", credentialInfo.guardianId);
+        localStorage.setItem('current_guardian_id', credentialInfo.guardianId.toString());
+      }
+      
       setMultisigPDA(multisigPDA.toString());
       setWalletData({
         lastUpdated: Date.now(),
         multisigPDA: multisigPDA.toString(),
       });
-      router.push("/dashboard");
+      router.push("/(app)/dashboard");
     } catch (err) {
       console.error("Lỗi khi đăng nhập:", err);
       setError(err instanceof Error ? err.message : "Lỗi không xác định");

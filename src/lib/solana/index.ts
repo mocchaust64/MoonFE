@@ -10,16 +10,17 @@ import IDL from "../../../idl.json";
 import { createFeePayerKeypair } from "./keypairs";
 
 // Constants
-const RPC_ENDPOINT =
-  process.env.NEXT_PUBLIC_RPC_ENDPOINT || "https://api.devnet.solana.com";
-export const PROGRAM_ID = new PublicKey(IDL.address);
+const RPC_ENDPOINT = "https://api.devnet.solana.com";
 
 // Connection Configuration
 const connectionOptions = {
   commitment: "confirmed" as Commitment,
-  confirmTransactionInitialTimeout: 60000,
+  confirmTransactionInitialTimeout: 30000,
   disableRetryOnRateLimit: false,
+  useWebSocket: true,
+  skipPreflight: true,
 };
+
 
 // Solana Connection
 export const connection = new Connection(RPC_ENDPOINT, connectionOptions);
@@ -48,8 +49,10 @@ const provider = new AnchorProvider(
   walletAdapter,
   connectionOptions,
 );
-export const program = new Program(IDL as Idl, provider);
 
-// Re-export program types
-export type MoonWalletProgram = Program<Idl>;
+// ProgramID from IDL
+export const PROGRAM_ID = new PublicKey(IDL.address);
+export const program = new Program<Idl>(IDL as Idl, provider);
+
+export type MoonWalletProgram = typeof program;
 export type { Idl };

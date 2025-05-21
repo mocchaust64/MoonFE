@@ -2,23 +2,23 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
-
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 
 interface ProtectedRouteProps {
-  children: React.ReactNode;
+  readonly children: React.ReactNode;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { multisigPDA } = useWalletStore();
-
+  const { multisigPDA } = useWalletInfo();
+  
   useEffect(() => {
     // Kiểm tra xem có phải route protected không (nằm trong thư mục (app))
     const isProtectedRoute =
       pathname !== "/" &&
       pathname !== "/create-wallet" &&
+      pathname !== "/recover-access" &&
       !pathname.startsWith("/guardian");
 
     // Nếu đã đăng nhập và đang ở trang chủ (/)

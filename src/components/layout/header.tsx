@@ -9,10 +9,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useWalletStore } from "@/store/walletStore";
+import { useWalletInfo } from "@/hooks/useWalletInfo";
 
 const Header = () => {
-  const { multisigPDA } = useWalletStore();
+  const { multisigPDA } = useWalletInfo();
 
   return (
     <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 h-14 border-b backdrop-blur">
@@ -22,7 +22,7 @@ const Header = () => {
           <div className="flex items-center">
             <Link href="/dashboard" className="flex items-center space-x-2">
               <span className="text-md font-bold md:text-xl">
-                🌙 Moon Wallet
+                🌙 Gokei Wallet
               </span>
             </Link>
           </div>
@@ -40,7 +40,7 @@ const Header = () => {
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>Connected to Solana Mainnet</p>
+                  <p>Connected to Solana Devnet</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
