@@ -98,7 +98,7 @@ export function InviteGuardianModal({
 
       const newGuardianId = await findNextAvailableGuardianId();
       const newInviteCode = generateRandomCode(8);
-      const baseUrl = "https://3dc9-222-252-14-158.ngrok-free.app";
+      const baseUrl = "https://gokeitest.vercel.app";
       const newInviteLink = `${baseUrl}/guardian/${newInviteCode}`;
 
       await saveInvitation({
