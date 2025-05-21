@@ -14,13 +14,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useWalletInfo } from "@/hooks/useWalletInfo";
-
+import { toast } from "sonner";
 
 export function InfoContent() {
   const { formatAddress, multisigPDA, guardians, threshold, guardianCount, walletName, balance } = useWalletInfo();
 
   const handleCopyAddress = (address: string) => {
     navigator.clipboard.writeText(address);
+    toast.success("Address copied to clipboard");
   };
 
   return (
@@ -45,18 +46,18 @@ export function InfoContent() {
           animate={{ x: 0, opacity: 1 }}
           transition={{ duration: 0.4, delay: 0.1 }}
         >
-          <Card className="bg-card/30 p-4">
+          <Card className="p-4">
             <div className="space-y-4">
               <div className="flex items-start gap-3">
                 <Avatar className="h-10 w-10">
-                  <AvatarFallback className="bg-gradient-to-br from-cyan-400 to-blue-500" />
+                  <AvatarFallback className="bg-gradient-to-br from-cyan-400 to-blue-500 text-white" />
                 </Avatar>
                 <div className="flex-1 space-y-1">
                   <div className="text-base font-medium">
                     {walletName || "Unnamed Wallet"}
                   </div>
                   <div className="text-muted-foreground text-sm">
-                    Gokei Wallet
+                    Moon Wallet
                   </div>
                 </div>
               </div>
@@ -115,11 +116,11 @@ export function InfoContent() {
             whileHover={{ scale: 1.02 }}
             transition={{ duration: 0.2 }}
           >
-            <Card className="bg-card/30 p-4">
+            <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-[#1E3A8A]/20 p-1.5">
+                <div className="h-8 w-8 rounded-lg bg-blue-100 p-1.5">
                   <svg
-                    className="text-primary h-5 w-5"
+                    className="text-blue-500 h-5 w-5"
                     xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24"
                     fill="none"
@@ -148,9 +149,9 @@ export function InfoContent() {
             whileHover={{ scale: 1.02 }}
             transition={{ duration: 0.2 }}
           >
-            <Card className="bg-card/30 p-4">
+            <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-amber-500/10 p-1.5">
+                <div className="h-8 w-8 rounded-lg bg-amber-100 p-1.5">
                   <svg
                     className="h-5 w-5 text-amber-500"
                     xmlns="http://www.w3.org/2000/svg"
@@ -180,7 +181,7 @@ export function InfoContent() {
             whileHover={{ scale: 1.02 }}
             transition={{ duration: 0.2 }}
           >
-            <Card className="bg-card/30 p-4">
+            <Card className="p-4">
               <div className="space-y-3">
                 <h2 className="text-base font-semibold">Settings</h2>
                 <div>

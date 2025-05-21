@@ -15,13 +15,13 @@ const Header = () => {
   const { multisigPDA } = useWalletInfo();
 
   return (
-    <header className="bg-white/95 supports-[backdrop-filter]:bg-white/60 fixed top-0 right-0 left-0 z-50 h-14 border-b border-gray-200 shadow-sm backdrop-blur">
+    <header className="bg-background/95 supports-[backdrop-filter]:bg-background/60 fixed top-0 right-0 left-0 z-50 h-14 border-b backdrop-blur">
       <div className="flex h-full justify-center">
         <div className="flex h-full w-full px-3 md:w-[1064px] md:px-0">
           {/* Logo Section */}
           <div className="flex items-center">
-            <Link href="/(app)/dashboard" className="flex items-center space-x-2">
-              <span className="text-md font-bold text-gray-800 md:text-xl">
+            <Link href="/dashboard" className="flex items-center space-x-2">
+              <span className="text-md font-bold md:text-xl">
                 🌙 Gokei Wallet
               </span>
             </Link>
@@ -32,9 +32,9 @@ const Header = () => {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger>
-                  <div className="bg-gray-100 flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 md:gap-2 md:px-3 md:py-1.5">
+                  <div className="bg-background/50 flex items-center gap-1 rounded-md border px-2 py-1 md:gap-2 md:px-3 md:py-1.5">
                     <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-medium text-gray-700 md:text-sm">
+                    <span className="text-xs font-medium md:text-sm">
                       Devnet
                     </span>
                   </div>

@@ -40,16 +40,16 @@ export default function RootLayout({
     <html lang="en" className="bg-background h-full">
       <body
         className={cn(
-          "min-h-screen w-full font-sans antialiased overflow-x-hidden",
+          "min-h-screen font-sans antialiased",
           geistSans.variable,
           geistMono.variable,
         )}
         suppressHydrationWarning
       >
         <ProtectedRoute>
-          <div className="flex min-h-screen w-full flex-col">
+          <div className="flex min-h-screen flex-col">
             <Header />
-            <main className="relative flex-1 w-full">{children}</main>
+            <main className="relative flex-1">{children}</main>
           </div>
           <Toaster />
         </ProtectedRoute>

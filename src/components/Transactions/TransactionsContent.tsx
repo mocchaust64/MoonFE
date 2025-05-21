@@ -134,7 +134,6 @@ export function TransactionsContent() {
   const [guardianId, setGuardianId] = useState<number | null>(null);
   
   const [expandedTransactions, setExpandedTransactions] = useState<Set<string>>(new Set());
-  const [expandedSignatures, setExpandedSignatures] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSigning, setIsSigning] = useState(false);
   const [selectedGuardian, setSelectedGuardian] = useState<GuardianData | null>(
@@ -149,18 +148,6 @@ export function TransactionsContent() {
 
   const toggleTransaction = (id: string) => {
     setExpandedTransactions((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
-
-  const toggleSignature = (id: string) => {
-    setExpandedSignatures((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(id)) {
         newSet.delete(id);
@@ -759,60 +746,45 @@ export function TransactionsContent() {
         });
         console.log("Transaction đã được gửi với signature:", signature);
         
+        // Tạo explorer URL ngay lập tức để sử dụng sau này
+        const explorerLink = createExplorerLink(signature);
+        
         // Xác nhận giao dịch
         console.log("Đang chờ xác nhận giao dịch...");
         try {
-          const confirmation = await connection.confirmTransaction({
-          signature,
-          lastValidBlockHeight: await connection.getBlockHeight(),
-          blockhash
-        }, 'confirmed');
-          
-          // Kiểm tra xem giao dịch có lỗi không
-          if (confirmation.value?.err) {
-            console.error("Lỗi xác nhận giao dịch:", confirmation.value.err);
-            throw new Error(`Giao dịch thất bại: ${JSON.stringify(confirmation.value.err)}`);
-          }
+          // Sử dụng phương thức xác nhận đơn giản hơn để tránh lỗi blockheight
+          await connection.confirmTransaction(signature, 'confirmed');
           
           console.log("Giao dịch đã được xác nhận thành công!");
+          await handleSuccessfulTransaction(signature, proposal);
+        } catch (confirmError) {
+          console.error("Lỗi khi xác nhận giao dịch:", confirmError);
           
-          // Create a copy of the proposal with updated status
-          const updatedProposal = {
-            ...proposal,
-            status: "Executed",
-            executedAt: Timestamp.now(),
-            transactionSignature: signature
-          };
-          
-          // Update the transaction in the current state immediately
-          setTransactions(prevTransactions => 
-            prevTransactions.map(tx => {
-              if (tx.proposal?.proposalId === proposal.proposalId) {
-                return {
-                  ...tx,
-                  status: "Executed",
-                  statusColor: getStatusColor("executed"),
-                  proposal: updatedProposal
-                };
-              }
-              return tx;
-            })
-          );
-        
-          // Cập nhật trạng thái đề xuất trong Firebase
-          console.log("Cập nhật trạng thái đề xuất trong Firebase...");
-          await updateProposalInFirebase(updatedProposal);
-          
-          // Fetch balance sau khi giao dịch hoàn thành
-          console.log("Cập nhật số dư sau giao dịch...");
-          fetchInfo();
-        
-          // Tạo explorer URL
-          const explorerLink = createExplorerLink(signature);
-          
-          toast.success(
+          // Kiểm tra xem giao dịch có thực sự thành công không dù có lỗi timeout
+          try {
+            console.log("Kiểm tra trạng thái giao dịch trên mạng...");
+            // Chờ 2 giây để blockchain có thời gian xử lý
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            const status = await connection.getSignatureStatus(signature);
+            console.log("Trạng thái giao dịch:", status?.value?.confirmationStatus);
+            
+            if (status?.value?.confirmationStatus === 'confirmed' || 
+                status?.value?.confirmationStatus === 'finalized') {
+              console.log("Giao dịch đã được xác nhận dù có lỗi timeout!");
+              toast.success("Giao dịch đã được xác nhận thành công!");
+              
+              await handleSuccessfulTransaction(signature, proposal);
+              return;
+            } else if (status?.value?.err) {
+              // Giao dịch thất bại với lỗi
+              console.error("Giao dịch thất bại với lỗi:", status.value.err);
+              throw new Error(`Giao dịch thất bại: ${JSON.stringify(status.value.err)}`);
+            } else if (status === null || status.value === null) {
+              // Không tìm thấy giao dịch
+              toast.warning(
             <div>
-              Đề xuất đã được thực thi thành công!
+                  Không thể xác định trạng thái giao dịch. Vui lòng kiểm tra trên Solana Explorer
               <div className="mt-2">
                 <a 
                   href={explorerLink} 
@@ -824,18 +796,16 @@ export function TransactionsContent() {
                 </a>
               </div>
             </div>,
-            { duration: 6000 }
-          );
+                { duration: 10000 }
+              );
+              return;
+            }
+          } catch (statusError) {
+            console.error("Không thể kiểm tra trạng thái giao dịch:", statusError);
+            throw confirmError;
+          }
           
-          // Refresh danh sách sau một khoảng thời gian ngắn
-          setTimeout(() => {
-        loadProposalsFromFirebase();
-          }, 2000);
-          
-        console.log("=== KẾT THÚC THỰC THI ĐỀ XUẤT ===");
-        } catch (confirmError) {
-          console.error("Lỗi khi xác nhận giao dịch:", confirmError);
-          throw new Error(`Không thể xác nhận giao dịch: ${confirmError instanceof Error ? confirmError.message : 'Lỗi không xác định'}`);
+          throw confirmError;
         }
       } catch (txError) {
         console.error("Lỗi trong quá trình xử lý transaction:", txError);
@@ -950,28 +920,6 @@ export function TransactionsContent() {
     }
   };
 
-  // Log debugging info
-  const logDebuggingInfo = (transaction: TransactionItem) => {
-    // Chỉ log một lần mỗi transaction để tránh spam console
-    if (!window.loggedTransactions) window.loggedTransactions = new Set<string>();
-    
-    if (!window.loggedTransactions.has(transaction.id)) {
-      console.log(`DEBUG ${transaction.id}:`, {
-        guardianPDA,
-        guardianId,
-        localStorageGuardianPDA: localStorage.getItem('guardianPDA'),
-        hasProposal: !!transaction.proposal,
-        statusRaw: transaction.proposal?.status,
-        statusLower: transaction.proposal?.status?.toLowerCase(),
-        buttonShouldShow: transaction.proposal && !transaction.proposal.transactionSignature,
-        hasUserSignedResult: transaction.proposal ? hasCurrentUserSigned(transaction.proposal) : false,
-        signers: transaction.proposal?.signers || []
-      });
-      window.loggedTransactions.add(transaction.id);
-    }
-    return null;
-  };
-
   useEffect(() => {
     const savedCredentialId = localStorage.getItem('credentialId');
     const savedGuardianId = localStorage.getItem('guardianId');
@@ -1060,15 +1008,9 @@ export function TransactionsContent() {
     return Math.max(0, requiredSignatures - signatureCount);
   };
 
-  // Sửa phần explorer URL để tránh nested ternary
+  // Sửa phần explorer URL để luôn trả về devnet
   const createExplorerLink = (signature: string): string => {
-    if (process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'mainnet-beta') {
-      return `https://explorer.solana.com/tx/${signature}`;
-    } 
-    if (process.env.NEXT_PUBLIC_SOLANA_NETWORK === 'devnet') {
       return `https://explorer.solana.com/tx/${signature}?cluster=devnet`;
-    }
-    return `https://explorer.solana.com/tx/${signature}?cluster=custom&customUrl=http://localhost:8899`;
   };
 
   // Thêm hàm cập nhật trạng thái đề xuất sau khi ký
@@ -1119,6 +1061,67 @@ export function TransactionsContent() {
       console.error("Lỗi khi cập nhật trạng thái đề xuất sau khi ký:", error);
     }
   };
+
+  // Thêm hàm xử lý giao dịch thành công
+  async function handleSuccessfulTransaction(txSignature: string, txProposal: Proposal) {
+    // Create a copy of the proposal with updated status
+    const updatedProposal = {
+      ...txProposal,
+      status: "Executed",
+      executedAt: Timestamp.now(),
+      transactionSignature: txSignature
+    };
+    
+    // Update the transaction in the current state immediately
+    setTransactions(prevTransactions => 
+      prevTransactions.map(tx => {
+        if (tx.proposal?.proposalId === txProposal.proposalId) {
+          return {
+            ...tx,
+            status: "Executed",
+            statusColor: getStatusColor("executed"),
+            proposal: updatedProposal
+          };
+        }
+        return tx;
+      })
+    );
+  
+    // Cập nhật trạng thái đề xuất trong Firebase
+    console.log("Cập nhật trạng thái đề xuất trong Firebase...");
+    await updateProposalInFirebase(updatedProposal);
+    
+    // Fetch balance sau khi giao dịch hoàn thành
+    console.log("Cập nhật số dư sau giao dịch...");
+    fetchInfo();
+  
+    // Tạo explorer URL
+    const explorerLink = createExplorerLink(txSignature);
+    
+    toast.success(
+      <div>
+        Đề xuất đã được thực thi thành công!
+        <div className="mt-2">
+          <a 
+            href={explorerLink} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-500 underline hover:text-blue-700"
+          >
+            Xem trên Solana Explorer
+          </a>
+        </div>
+      </div>,
+      { duration: 6000 }
+    );
+    
+    // Refresh danh sách sau một khoảng thời gian ngắn
+    setTimeout(() => {
+      loadProposalsFromFirebase();
+    }, 2000);
+    
+    console.log("=== KẾT THÚC THỰC THI ĐỀ XUẤT ===");
+  }
 
   return (
     <motion.div
@@ -1252,57 +1255,24 @@ export function TransactionsContent() {
                     transition={{ duration: 0.3 }}
                       className="overflow-hidden"
                     >
-                      <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 rounded-t-none p-6 shadow-lg border-t-0 border-slate-700/50 backdrop-blur-sm">
-                        <div className="flex flex-col lg:flex-row gap-8">
-                          <div className="space-y-5 flex-1">
-                            <h3 className="text-lg font-medium flex items-center text-blue-100 bg-blue-500/10 px-4 py-2 rounded-lg shadow-inner backdrop-blur-sm border border-blue-500/30 w-auto inline-block">
-                              <FileText className="h-4 w-4 mr-2 text-blue-300" />
-                              Transaction Details
-                            </h3>
-                            <div className="space-y-3 bg-slate-800/50 backdrop-blur-sm rounded-xl p-5 shadow-sm border border-slate-700/50">
+                    <Card className="bg-muted/50 rounded-t-none border-t-0 p-6">
+                      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-medium">Transaction Details</h3>
+                          <div className="space-y-3">
                               {transaction.type === "Transfer" ? (
                                 <>
-                                  <div className="flex flex-col space-y-4">
-                                    {/* From address */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
-                                      <span className="font-medium text-blue-200 bg-blue-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                                        </svg>
-                                        From
-                                      </span>
-                                      <div className="w-full">
-                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
-                                          {transaction.proposal?.multisigAddress || "Your wallet"}
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">From</span>
+                                  <span className="font-mono text-xs truncate max-w-[250px]">{transaction.proposal?.multisigAddress || "Your wallet"}</span>
                                         </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">To</span>
+                                  <span className="font-mono text-xs truncate max-w-[250px]">{transaction.proposal?.destination || "Unknown"}</span>
                                       </div>
-                                    </div>
-                                    
-                                    {/* To address */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
-                                      <span className="font-medium text-indigo-200 bg-indigo-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        To
-                                      </span>
-                                      <div className="w-full">
-                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
-                                          {transaction.proposal?.destination || "Unknown"}
-                                        </div>
-                                      </div>
-                                    </div>
-                                    
-                                    {/* Amount */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
-                                      <span className="font-medium text-violet-200 bg-violet-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        Amount
-                                      </span>
-                                      <div className="w-full flex justify-start">
-                                        <span className="font-bold text-base text-white bg-gradient-to-r from-violet-600 to-purple-700 px-4 py-2 rounded-md border border-violet-500/30 shadow-md">
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Amount</span>
+                                  <span className="font-semibold">
                                           {(() => {
                                             // For SOL transfers
                                             if (transaction.proposal?.action === 'transfer') {
@@ -1335,241 +1305,134 @@ export function TransactionsContent() {
                                           })()}
                                         </span>
                                       </div>
-                                    </div>
-                                    
-                                    {/* Creation date */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                                      <span className="font-medium text-emerald-200 bg-emerald-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                        </svg>
-                                        Created
-                                      </span>
-                                      <div className="w-full">
-                                        <span className="text-sm text-slate-300 bg-slate-900/50 px-3 py-1 rounded-md inline-block border border-slate-700/50">{transaction.details.createdOn}</span>
-                                      </div>
-                                    </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Created on</span>
+                                  <span>{transaction.details.createdOn}</span>
                                   </div>
                                 </>
                               ) : (
                                 <>
-                                  <div className="flex flex-col space-y-4">
-                                    {/* Guardian ID */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
-                                      <span className="font-medium text-purple-200 bg-purple-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[100px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                                        </svg>
-                                Guardian ID
-                              </span>
-                                      <div className="w-full">
-                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
-                                          {transaction.details.author}
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Guardian ID</span>
+                                  <span>{transaction.details.author}</span>
                             </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Created on</span>
+                                  <span>{transaction.details.createdOn}</span>
                                       </div>
-                                    </div>
-                                    
-                                    {/* Created date */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
-                                      <span className="font-medium text-emerald-200 bg-emerald-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[100px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                        </svg>
-                                        Created
-                              </span>
-                                      <div className="w-full">
-                                        <span className="text-sm text-slate-300 bg-slate-900/50 px-3 py-1 rounded-md inline-block border border-slate-700/50">{transaction.details.createdOn}</span>
-                            </div>
-                                    </div>
-                                    
-                                    {/* Invite code */}
-                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                                      <span className="font-medium text-cyan-200 bg-cyan-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[100px] inline-flex items-center justify-center sm:justify-start">
-                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
-                                        </svg>
-                                Invite Code
-                              </span>
-                                      <div className="w-full">
-                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
-                                          {transaction.details.executedOn}
-                            </div>
-                                      </div>
-                                    </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Invite Code</span>
+                                  <span>{transaction.details.executedOn}</span>
                                   </div>
                                 </>
                               )}
                               {/* Add Solana Explorer link if there's a transaction signature */}
                             {transaction.proposal?.transactionSignature && transaction.proposal.status === "Executed" && (
-                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 mt-2 border-t border-slate-700/50">
-                                  <span className="font-medium text-amber-200 bg-amber-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
-                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                  Signature
-                                </span>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Transaction</span>
                                 <a
                                   href={createExplorerLink(transaction.proposal.transactionSignature)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                    className="text-blue-400 hover:text-blue-300 bg-blue-900/20 px-3 py-1 rounded-md font-medium flex items-center justify-center border border-blue-500/30 transition-colors hover:bg-blue-900/30"
+                                  className="text-blue-500 hover:text-blue-600 transition-colors hover:underline"
                                 >
-                                    <span>View on Solana Explorer</span>
-                                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                    </svg>
+                                  View on Explorer
                                 </a>
                               </div>
                             )}
                           </div>
                         </div>
 
-                          <div className="space-y-4 flex-1">
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-medium">Results</h3>
+                          <div className="grid grid-cols-3 gap-4">
+                            <div className="bg-background rounded-lg p-4 text-center">
+                              <div className="text-2xl font-bold text-green-500">
+                                {transaction.details.results.confirmed}
+                              </div>
+                              <div className="text-muted-foreground text-sm">
+                                Confirmed
+                              </div>
+                            </div>
+                            <div className="bg-background rounded-lg p-4 text-center">
+                              <div className="text-2xl font-bold text-red-500">
+                                {transaction.details.results.rejected}
+                              </div>
+                              <div className="text-muted-foreground text-sm">
+                                Rejected
+                              </div>
+                            </div>
+                            <div className="bg-background rounded-lg p-4 text-center">
+                              <div className="text-2xl font-bold">
+                                {transaction.details.results.threshold}
+                              </div>
+                              <div className="text-muted-foreground text-sm">
+                                Threshold
+                              </div>
+                            </div>
+                          </div>
+
                           {transaction.isPendingGuardian && (
-                              <div className="flex justify-end mt-3">
+                            <div className="mt-4 flex justify-end">
                               <Button
                                 onClick={() =>
                                   handleConfirmGuardian(
                                     transaction.guardianData!,
                                   )
                                 }
-                                  className="transition-all duration-300 hover:scale-105 hover:shadow-lg bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold py-2 px-4 rounded-md border border-purple-700/50 shadow-md"
+                                className="transition-transform hover:scale-105"
                               >
                                 Confirm
                               </Button>
                             </div>
                           )}
                           
-                          {/* Log debugging info */}
-                          {logDebuggingInfo(transaction)}
-                          
-                            {/* Action buttons for proposal */}
+                          {/* Action buttons for proposals */}
                           {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
-                              <div className="space-y-3 bg-slate-800/50 backdrop-blur-sm rounded-xl p-5 shadow-sm border border-slate-700/50">
-                                {/* Show notification when signed but threshold not met */}
-                              {hasCurrentUserSigned(transaction.proposal) && !isReadyToExecute(transaction.proposal) && (
-                                  <div className="text-center text-yellow-300 bg-yellow-900/30 p-3 rounded-lg text-sm border border-yellow-500/30 mb-4">
-                                    <svg className="w-5 h-5 mx-auto mb-1 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                    </svg>
-                                    You have signed this proposal. {getMissingSignatureCount(transaction.proposal)} more signature(s) needed for execution.
+                            <div className="mt-4 space-y-3">
+                              {hasCurrentUserSigned(transaction.proposal) ? (
+                                <div className="flex items-center justify-between rounded-lg border bg-background p-3">
+                                  <span className="text-sm text-muted-foreground">
+                                    You&apos;ve signed this transaction
+                                  </span>
+                                  <div className="h-2 w-2 rounded-full bg-green-500" />
                                 </div>
-                              )}
-                              
-                                {/* Sign proposal button - Only show when not signed AND when proposal is not ready to execute */}
-                                {!hasCurrentUserSigned(transaction.proposal) && !isReadyToExecute(transaction.proposal) && (
+                              ) : (
                                 <Button
                                   onClick={() => handleSignProposal(transaction.proposal!)}
-                                  disabled={isSigning || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
-                                    className="transition-all duration-300 hover:scale-105 hover:shadow-lg w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold py-3 rounded-md border border-indigo-700/50 shadow-md relative overflow-hidden"
+                                  disabled={isSigning}
+                                  className="w-full transition-transform hover:scale-105"
                                 >
-                                  {isSigning && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
-                                    <span className="flex items-center justify-center">
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        Signing...
-                                    </span>
+                                  {isSigning && activeProposalId === transaction.proposal.proposalId ? (
+                                    "Signing..."
                                   ) : (
-                                      <span className="flex items-center justify-center">
-                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                        </svg>
-                                        Sign Proposal
-                                      </span>
+                                    "Sign Transaction"
                                   )}
                                 </Button>
                               )}
                               
-                                {/* Execute proposal button - Only show when enough signatures */}
-                              {isReadyToExecute(transaction.proposal) && (
+                              {isReadyToExecute(transaction.proposal) ? (
                                 <Button
                                   onClick={() => handleExecuteProposal(transaction.proposal!)}
-                                  disabled={isProcessing || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
-                                    className="transition-all duration-300 hover:scale-105 hover:shadow-lg w-full bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-semibold py-3 rounded-md border border-emerald-700/50 shadow-md relative overflow-hidden"
+                                  disabled={isProcessing}
+                                  className="w-full transition-transform hover:scale-105 bg-green-600 hover:bg-green-500"
                                 >
-                                  {isProcessing && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
-                                    <span className="flex items-center justify-center">
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        Executing...
-                                    </span>
+                                  {isProcessing && activeProposalId === transaction.proposal.proposalId ? (
+                                    "Processing..."
                                   ) : (
-                                      <span className="flex items-center justify-center">
-                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                        </svg>
-                                        Execute Proposal
-                                      </span>
+                                    "Execute Transaction"
                                   )}
                                 </Button>
-                              )}
-                            </div>
-                          )}
-
-                            <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl shadow-sm mt-4 overflow-hidden border border-slate-700/50">
-                              <div 
-                                className="flex items-center justify-between cursor-pointer p-4 border-b border-slate-700/50 bg-gradient-to-r from-slate-800/80 to-slate-700/80 hover:from-slate-700/80 hover:to-slate-600/80 transition-all"
-                                onClick={() => toggleSignature(transaction.id)}
-                              >
-                                <h4 className="text-sm font-medium flex items-center text-slate-200">
-                                  {expandedSignatures.has(transaction.id) ? (
-                                    <ChevronUp className="h-4 w-4 mr-2 text-cyan-400" />
-                                  ) : (
-                                    <ChevronDown className="h-4 w-4 mr-2 text-cyan-400" />
-                                  )}
-                                  Signature Status
-                                </h4>
-                                <div className="flex items-center gap-1">
-                                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-500"></div>
-                                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-400"></div>
-                                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-300"></div>
-                                </div>
-                              </div>
-                            
-                              <AnimatePresence>
-                                {expandedSignatures.has(transaction.id) && (
-                                  <motion.div
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: "auto", opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    transition={{ duration: 0.3 }}
-                                    className="overflow-hidden"
-                                  >
-                                    <div className="p-5">
-                                      <div className="grid grid-cols-2 gap-4">
-                                        <div className="flex flex-col items-center p-3 bg-gradient-to-br from-slate-900/70 to-slate-800/70 rounded-lg border border-green-600/20">
-                                          <div className="bg-gradient-to-br from-green-600 to-emerald-600 text-white h-10 w-10 rounded-full flex items-center justify-center font-semibold text-sm mb-2 shadow-lg shadow-green-900/30">
-                                            {transaction.details.results.confirmed}
-                                          </div>
-                                          <span className="text-sm font-medium text-green-400">Confirmed</span>
-                                        </div>
-                                        
-                                        <div className="flex flex-col items-center p-3 bg-gradient-to-br from-slate-900/70 to-slate-800/70 rounded-lg border border-red-600/20">
-                                          <div className="bg-gradient-to-br from-red-600 to-rose-600 text-white h-10 w-10 rounded-full flex items-center justify-center font-semibold text-sm mb-2 shadow-lg shadow-red-900/30">
-                                            {transaction.details.results.rejected}
-                                          </div>
-                                          <span className="text-sm font-medium text-red-400">Rejected</span>
-                                        </div>
-                                      </div>
-                                    
-                                      {transaction.proposal && (
-                                        <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-700/50">
-                                          <span className="text-sm font-medium text-slate-400">Required signatures:</span>
-                                          <div className="flex items-center gap-2">
-                                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 py-1 rounded-md flex items-center justify-center font-semibold text-sm shadow-md">
-                                              {transaction.details.results.threshold}
-                                            </div>
-                                            {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
-                                              <span className="text-sm text-indigo-300">
-                                                ({getMissingSignatureCount(transaction.proposal)} more needed)
+                              ) : (
+                                <div className="flex items-center justify-between rounded-lg border bg-background p-3">
+                                  <span className="text-sm text-muted-foreground">
+                                    Missing {getMissingSignatureCount(transaction.proposal)} signatures
                                               </span>
-                                            )}
-                                          </div>
+                                  <div className="h-2 w-2 rounded-full bg-yellow-500" />
                                         </div>
                                       )}
                                     </div>
-                                  </motion.div>
                                 )}
-                              </AnimatePresence>
-                            </div>
                         </div>
                       </div>
                     </Card>

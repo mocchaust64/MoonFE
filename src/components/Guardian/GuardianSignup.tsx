@@ -99,10 +99,10 @@ export function GuardianSignup({
     try {
       const exists = await checkGuardianNameExists(name);
       if (exists) {
-        setNameError("Tên guardian này đã tồn tại. Vui lòng chọn tên khác.");
+        setNameError("This guardian name already exists. Please choose a different name.");
       }
     } catch (error) {
-      console.error("Lỗi khi kiểm tra tên:", error);
+      console.error("Error checking name:", error);
     } finally {
       setIsCheckingName(false);
     }
@@ -123,12 +123,12 @@ export function GuardianSignup({
       }
 
       if (!guardianName) {
-        throw new Error("Vui lòng nhập tên Guardian");
+        throw new Error("Please enter Guardian name");
       }
 
       const exists = await checkGuardianNameExists(guardianName);
       if (exists) {
-        setNameError("Tên guardian này đã tồn tại. Vui lòng chọn tên khác.");
+        setNameError("This guardian name already exists. Please choose a different name.");
         setIsLoading(false);
         return;
       }
@@ -202,45 +202,44 @@ export function GuardianSignup({
   return (
     <>
       {isInitialLoading ? (
-        <Card className="w-full max-w-md border-zinc-800/70 bg-zinc-900/60 backdrop-blur-lg shadow-xl">
-          <CardContent className="flex flex-col items-center justify-center p-8">
-            <div className="w-12 h-12 rounded-full border-2 border-blue-500 border-t-transparent animate-spin mb-4"></div>
-            <p className="text-blue-200">Loading invitation details...</p>
+        <Card className="w-full max-w-md p-6 border bg-white/10 backdrop-blur-sm shadow-sm">
+          <CardContent className="flex flex-col items-center justify-center">
+            <div className="w-12 h-12 rounded-full border-2 border-primary border-t-transparent animate-spin mb-4"></div>
+            <p className="text-primary">Loading invitation details...</p>
           </CardContent>
         </Card>
       ) : loadError ? (
-        <Card className="w-full max-w-md border-red-800/30 bg-zinc-900/60 backdrop-blur-lg shadow-xl">
+        <Card className="w-full max-w-md p-6 border bg-white/10 backdrop-blur-sm shadow-sm">
           <CardHeader className="pb-4">
-            <CardTitle className="text-lg sm:text-xl text-center text-red-300">
-              Error Loading Invitation
+            <CardTitle className="text-lg text-center text-destructive">
+              Error Loading Information
             </CardTitle>
           </CardHeader>
           <CardContent className="text-center">
-            <div className="text-red-300 mb-4">{loadError}</div>
+            <div className="text-destructive mb-4">{loadError}</div>
             <Button 
               onClick={() => window.location.reload()}
-              className="bg-red-800/50 hover:bg-red-800/70"
+              variant="outline"
+              className="bg-white/20 hover:bg-white/30"
             >
-              Refresh Page
+              Reload Page
             </Button>
           </CardContent>
         </Card>
       ) : (
-        <Card className="w-full max-w-md border-zinc-800/70 bg-zinc-900/60 backdrop-blur-lg shadow-xl">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg sm:text-xl text-center sm:text-left">
-              Register as Guardian for{" "}
-              <span className="text-blue-400">{walletName || "Unnamed Wallet"}</span>
+        <Card className="w-full max-w-md p-6 border bg-white/10 backdrop-blur-sm shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-foreground">
+              Register as Guardian for {walletName || "Unnamed Wallet"}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="guardian-name" className="mb-1.5 block text-sm font-medium text-gray-300">
-                  Tên Guardian
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Guardian Name
                 </label>
                 <Input
-                  id="guardian-name"
                   value={guardianName}
                   onChange={(e) => {
                     setGuardianName(e.target.value);
@@ -248,43 +247,42 @@ export function GuardianSignup({
                   }}
                   onBlur={() => checkDuplicateName(guardianName)}
                   disabled={isRegistrationSuccess}
-                  placeholder="Nhập tên guardian của bạn"
+                  placeholder="Enter your guardian name"
+                  className="bg-white/20"
                   required
-                  className="bg-zinc-800/60 border-zinc-700/50"
                 />
                 {nameError && (
-                  <p className="mt-1.5 text-sm text-red-400">{nameError}</p>
+                  <p className="mt-1.5 text-sm text-destructive">{nameError}</p>
                 )}
                 {isCheckingName && (
-                  <p className="mt-1.5 text-sm text-blue-400">Đang kiểm tra tên...</p>
+                  <p className="mt-1.5 text-sm text-muted-foreground">Checking name...</p>
                 )}
               </div>
               
               <div>
-                <label htmlFor="recovery-phrase" className="mb-1.5 block text-sm font-medium text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-foreground">
                   Recovery Phrase
                 </label>
                 <Input
-                  id="recovery-phrase"
                   type="password"
                   value={recoveryPhrase}
                   onChange={(e) => setRecoveryPhrase(e.target.value)}
                   disabled={isRegistrationSuccess}
                   placeholder="Enter recovery phrase"
+                  className="bg-white/20"
                   required
-                  className="bg-zinc-800/60 border-zinc-700/50"
                 />
-                <p className="mt-1.5 text-xs text-gray-400">
+                <p className="mt-1 text-xs text-muted-foreground">
                   This phrase will be used to recover your wallet in case of emergency
                 </p>
               </div>
 
               {status && (
                 <div
-                  className={`mt-3 rounded-md p-3 text-sm ${
+                  className={`p-3 rounded text-sm ${
                     isRegistrationSuccess
-                      ? "bg-green-900/30 text-green-300 border border-green-700/50"
-                      : "bg-blue-900/20 text-blue-300 border border-blue-800/40"
+                      ? "bg-green-100/30 text-green-800 backdrop-blur-sm"
+                      : "bg-white/20 text-foreground backdrop-blur-sm"
                   }`}
                 >
                   {status}
@@ -294,22 +292,13 @@ export function GuardianSignup({
               <Button
                 type="submit"
                 disabled={isLoading || !guardianId || isRegistrationSuccess || nameError !== ""}
-                className="w-full mt-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
+                className="w-full"
               >
-                {(() => {
-                  if (isLoading) {
-                    return (
-                      <span className="flex items-center justify-center">
-                        <span className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mr-2"></span>
-                        Processing...
-                      </span>
-                    );
-                  } else if (isRegistrationSuccess) {
-                    return "Registration Submitted";
-                  } else {
-                    return "Register";
-                  }
-                })()}
+                {isLoading
+                  ? "Processing..."
+                  : isRegistrationSuccess
+                    ? "Registration Submitted"
+                    : "Register"}
               </Button>
             </form>
           </CardContent>

@@ -21,8 +21,8 @@ export default function Home() {
       </div>
 
       {/* Main content */}
-      <div className="relative container flex min-h-screen items-center justify-center px-4 py-10 md:py-20">
-        <div className="mx-auto flex max-w-[1200px] flex-col items-center justify-center gap-8 text-center md:gap-12">
+      <div className="relative container flex min-h-screen items-center px-4 py-10 md:py-20">
+        <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-8 text-center md:gap-12">
           {/* Hero section */}
           <div className="space-y-4 md:space-y-6">
             <h1 className="text-3xl font-bold tracking-tight md:text-4xl lg:text-6xl">
@@ -39,7 +39,7 @@ export default function Home() {
           </div>
 
           {/* Action buttons */}
-          <div className="flex w-full max-w-md flex-col gap-3 px-4 sm:flex-row sm:gap-4 sm:px-0">
+          <div className="flex w-full flex-col gap-3 px-4 sm:flex-row sm:gap-4 sm:px-0 justify-center ">
             <Link href="/create-wallet" className="w-full sm:w-auto">
               <Button
                 className="group w-full bg-gradient-to-r from-blue-500 to-cyan-400 text-white hover:from-blue-600 hover:to-cyan-500"
