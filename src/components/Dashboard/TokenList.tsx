@@ -69,15 +69,15 @@ export function TokenList({ walletAddress }: TokenListProps) {
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center mb-2">
-        <h3 className="text-sm font-medium text-gray-400">Token Balances</h3>
+        <h3 className="text-sm font-medium text-gray-500">Token Balances</h3>
         <Button 
           variant="ghost" 
           size="sm" 
-          className="h-8 w-8 rounded-full hover:bg-zinc-800/80"
+          className="h-8 w-8 rounded-full hover:bg-gray-100"
           onClick={handleRefresh}
           disabled={isRefreshing}
         >
-          <RefreshCw className={`h-4 w-4 text-gray-400 hover:text-blue-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`h-4 w-4 text-gray-400 hover:text-blue-500 ${isRefreshing ? 'animate-spin' : ''}`} />
         </Button>
       </div>
       
@@ -86,17 +86,17 @@ export function TokenList({ walletAddress }: TokenListProps) {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="bg-zinc-900/60 rounded-xl border border-zinc-800/60 p-4 sm:p-5 flex flex-col items-center justify-center shadow-inner"
+          className="bg-gray-50 rounded-xl border border-gray-200 p-4 sm:p-5 flex flex-col items-center justify-center"
         >
-          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-zinc-800/60 mb-3 flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gray-100 mb-3 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500">
               <circle cx="8" cy="8" r="6"></circle>
               <path d="M18.09 10.37A6 6 0 1 1 10.34 18.13"></path>
               <path d="m7 6 4 4"></path>
               <path d="m7 10 4-4"></path>
             </svg>
           </div>
-          <p className="text-gray-300 font-medium text-sm">No tokens found</p>
+          <p className="text-gray-700 font-medium text-sm">No tokens found</p>
           <p className="text-gray-500 text-xs mt-1">Your tokens will appear here</p>
         </motion.div>
       ) : (
@@ -108,7 +108,7 @@ export function TokenList({ walletAddress }: TokenListProps) {
             transition={{ delay: index * 0.05 }}
             className="group"
           >
-            <div className="bg-zinc-900/60 rounded-lg border border-zinc-800/60 p-2.5 sm:p-3.5 transition-all duration-300 hover:shadow-md hover:border-zinc-700/60 hover:bg-zinc-900/80">
+            <div className="bg-gray-50 rounded-lg border border-gray-200 p-2.5 sm:p-3.5 transition-all duration-300 hover:shadow-md hover:border-gray-300 hover:bg-gray-100">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div 
@@ -117,17 +117,17 @@ export function TokenList({ walletAddress }: TokenListProps) {
                     {token.symbol?.[0] || token.mint.slice(0, 2)}
                   </div>
                   <div>
-                    <div className="font-medium text-white text-sm sm:text-base">
+                    <div className="font-medium text-gray-900 text-sm sm:text-base">
                       {token.symbol || 'Unknown Token'}
                     </div>
-                    <div className="text-[10px] sm:text-xs text-gray-400 font-mono">
+                    <div className="text-[10px] sm:text-xs text-gray-500 font-mono">
                       {`${token.mint.slice(0, 4)}...${token.mint.slice(-4)}`}
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="text-right">
-                    <div className="font-medium text-white text-sm sm:text-base">
+                    <div className="font-medium text-gray-900 text-sm sm:text-base">
                       {token.balance.toLocaleString(undefined, {
                         maximumFractionDigits: 6,
                       })}
@@ -137,18 +137,18 @@ export function TokenList({ walletAddress }: TokenListProps) {
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-6 w-6 sm:h-7 sm:w-7 rounded-full hover:bg-zinc-800/80"
+                      className="h-6 w-6 sm:h-7 sm:w-7 rounded-full hover:bg-gray-200"
                       onClick={() => handleCopyAddress(token.mint)}
                     >
-                      <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-gray-400 hover:text-blue-400" />
+                      <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-gray-500 hover:text-blue-500" />
                     </Button>
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-6 w-6 sm:h-7 sm:w-7 rounded-full hover:bg-zinc-800/80"
+                      className="h-6 w-6 sm:h-7 sm:w-7 rounded-full hover:bg-gray-200"
                       onClick={() => openExplorer(token.mint)}
                     >
-                      <ExternalLink className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-gray-400 hover:text-blue-400" />
+                      <ExternalLink className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-gray-500 hover:text-blue-500" />
                     </Button>
                   </div>
                 </div>

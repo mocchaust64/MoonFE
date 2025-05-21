@@ -28,7 +28,7 @@ const LogoutButton = () => {
     <Button
       variant="outline"
       size="sm"
-      className="gap-1 px-2 md:gap-2 md:px-3 border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-gray-300"
+      className="gap-1 px-2 md:gap-2 md:px-3 border-gray-300 hover:bg-gray-100 text-gray-700"
       onClick={handleLogout}
     >
       <LogOut className="h-4 w-4" />

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import Header from "@/components/layout/header";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +28,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#0c1220",
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({
@@ -36,7 +37,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark bg-[#0c1220] h-full">
+    <html lang="en" className="bg-background h-full">
       <body
         className={cn(
           "min-h-screen w-full font-sans antialiased overflow-x-hidden",
@@ -47,6 +48,7 @@ export default function RootLayout({
       >
         <ProtectedRoute>
           <div className="flex min-h-screen w-full flex-col">
+            <Header />
             <main className="relative flex-1 w-full">{children}</main>
           </div>
           <Toaster />
