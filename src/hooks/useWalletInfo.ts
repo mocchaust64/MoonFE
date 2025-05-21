@@ -10,6 +10,9 @@ import { getWalletMetadata } from "@/lib/firebase/walletService";
 // Thời gian timeout cho mỗi request (15 giây)
 const FETCH_TIMEOUT = 15000;
 
+// Thời gian tối thiểu giữa các lần fetch (10 giây)
+const MIN_FETCH_INTERVAL = 10000;
+
 // Định nghĩa interface cho dữ liệu multisig account
 interface MultisigData {
   threshold: number;
@@ -40,6 +43,17 @@ export function useWalletInfo() {
   const isFetchingRef = useRef<boolean>(false);
   // Ref để theo dõi timeout ID
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  // Ref để theo dõi thời gian fetch gần nhất
+  const lastFetchTimeRef = useRef<number>(0);
+
+  // Kiểm tra xem có thể fetch lại hay không dựa trên thời gian
+  const canFetchAgain = useCallback(() => {
+    const now = Date.now();
+    // Kiểm tra localStorage để đảm bảo tất cả các instance của hook đều tôn trọng thời gian chờ
+    const storedLastFetchTime = Number(localStorage.getItem('moonwallet_last_fetch_time') || '0');
+    const lastFetchTime = Math.max(lastFetchTimeRef.current, storedLastFetchTime);
+    return (now - lastFetchTime) > MIN_FETCH_INTERVAL;
+  }, []);
 
   // Hàm fetch với timeout
   const fetchWithTimeout = useCallback(async <T>(promise: Promise<T>): Promise<T> => {
@@ -160,15 +174,24 @@ export function useWalletInfo() {
   }, [multisigPDA, fetchWithTimeout, getWalletNameFromSources, updateWalletData, walletName]);
 
   // Hàm fetch chính - đã giảm độ phức tạp
-  const fetchWalletData = useCallback(async (fetchFull = false) => {
+  const fetchWalletData = useCallback(async (fetchFull = false, forceUpdate = false) => {
     // Kiểm tra các điều kiện tiên quyết
     if (!multisigPDA || isFetchingRef.current || !isMountedRef.current) {
       return;
     }
 
+    // Kiểm tra thời gian giữa các lần fetch
+    if (!forceUpdate && !canFetchAgain()) {
+      console.log("Bỏ qua fetch, đã fetch gần đây");
+      return;
+    }
+
     try {
-      // Đánh dấu đang fetch
+      // Đánh dấu đang fetch và cập nhật thời gian fetch
       isFetchingRef.current = true;
+      const now = Date.now();
+      lastFetchTimeRef.current = now;
+      localStorage.setItem('moonwallet_last_fetch_time', now.toString());
       
       // Chỉ set loading khi fetch đầy đủ và chưa có dữ liệu
       if (fetchFull && balance === 0) {
@@ -211,7 +234,8 @@ export function useWalletInfo() {
     setError, 
     balance, 
     fetchBalanceOnly, 
-    fetchFullWalletInfo
+    fetchFullWalletInfo,
+    canFetchAgain
   ]);
 
   // Thiết lập initial fetch khi component mount
@@ -220,8 +244,10 @@ export function useWalletInfo() {
     
     if (!multisigPDA) return;
     
-    // Fetch dữ liệu ban đầu khi vừa mở app
-    fetchWalletData(true);
+    // Fetch dữ liệu ban đầu khi vừa mở app, nhưng tôn trọng thời gian fetch
+    if (canFetchAgain()) {
+      fetchWalletData(true);
+    }
     
     // Đảm bảo loading không bị kẹt
     timeoutIdRef.current = setTimeout(() => {
@@ -234,7 +260,10 @@ export function useWalletInfo() {
     // Thêm event listener cho visibility change để fetch khi từ background sang foreground
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && multisigPDA) {
-        fetchWalletData(true);
+        // Khi quay lại tab, cần fetch lại nhưng tôn trọng thời gian fetch
+        if (canFetchAgain()) {
+          fetchWalletData(true);
+        }
       }
     };
     
@@ -251,7 +280,7 @@ export function useWalletInfo() {
       
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [multisigPDA, fetchWalletData, isLoading, setLoading]);
+  }, [multisigPDA, fetchWalletData, isLoading, setLoading, canFetchAgain]);
 
   const formatAddress = useCallback((address: string) => {
     if (!address) return "";
@@ -270,8 +299,8 @@ export function useWalletInfo() {
     isLoading,
     error,
     // Các hàm để fetch theo demand
-    fetchInfo: useCallback(() => fetchWalletData(true), [fetchWalletData]),
-    fetchBalance: useCallback(() => fetchWalletData(false), [fetchWalletData]),
+    fetchInfo: useCallback(() => fetchWalletData(true, true), [fetchWalletData]),
+    fetchBalance: useCallback(() => fetchWalletData(false, false), [fetchWalletData]),
     formatAddress,
   };
 }
