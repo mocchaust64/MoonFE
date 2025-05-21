@@ -30,8 +30,7 @@ import { getConnection } from "@/utils/connectionUtils";
 import { updateProposalInFirebase } from "@/utils/proposalService";
 import { handleSignProposal as signProposalWithWebAuthn } from "@/utils/proposalSigning";
 
-// Đưa hàm getErrorCodeFromMessage lên trước các hàm sử dụng nó
-// Sửa lỗi S6594 sử dụng RegExp.exec() thay vì match
+
 const getErrorCodeFromMessage = (message: string): string | undefined => {
   const errorCodeRegex = /custom program error: (0x[0-9a-fA-F]+)/;
   const match = errorCodeRegex.exec(message);
@@ -128,13 +127,14 @@ declare global {
 }
 
 export function TransactionsContent() {
-  const { threshold, guardianCount, multisigPDA } = useWalletInfo();
+  const { threshold, guardianCount, multisigPDA, fetchInfo } = useWalletInfo();
   const { guardians } = useWalletStore();
   const [guardianPDA, setGuardianPDA] = useState<string | null>(null);
   const [credentialId, setCredentialId] = useState<string | null>(null);
   const [guardianId, setGuardianId] = useState<number | null>(null);
   
   const [expandedTransactions, setExpandedTransactions] = useState<Set<string>>(new Set());
+  const [expandedSignatures, setExpandedSignatures] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSigning, setIsSigning] = useState(false);
   const [selectedGuardian, setSelectedGuardian] = useState<GuardianData | null>(
@@ -149,6 +149,18 @@ export function TransactionsContent() {
 
   const toggleTransaction = (id: string) => {
     setExpandedTransactions((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSignature = (id: string) => {
+    setExpandedSignatures((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(id)) {
         newSet.delete(id);
@@ -782,35 +794,39 @@ export function TransactionsContent() {
                   statusColor: getStatusColor("executed"),
                   proposal: updatedProposal
                 };
-        }
+              }
               return tx;
             })
           );
         
-        // Cập nhật trạng thái đề xuất trong Firebase
-        console.log("Cập nhật trạng thái đề xuất trong Firebase...");
+          // Cập nhật trạng thái đề xuất trong Firebase
+          console.log("Cập nhật trạng thái đề xuất trong Firebase...");
           await updateProposalInFirebase(updatedProposal);
+          
+          // Fetch balance sau khi giao dịch hoàn thành
+          console.log("Cập nhật số dư sau giao dịch...");
+          fetchInfo();
         
-        // Tạo explorer URL
-        const explorerLink = createExplorerLink(signature);
-        
-        toast.success(
-          <div>
-            Đề xuất đã được thực thi thành công!
-            <div className="mt-2">
-              <a 
-                href={explorerLink} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-500 underline hover:text-blue-700"
-              >
-                Xem trên Solana Explorer
-              </a>
-            </div>
-          </div>,
-          { duration: 6000 }
-        );
-        
+          // Tạo explorer URL
+          const explorerLink = createExplorerLink(signature);
+          
+          toast.success(
+            <div>
+              Đề xuất đã được thực thi thành công!
+              <div className="mt-2">
+                <a 
+                  href={explorerLink} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-blue-500 underline hover:text-blue-700"
+                >
+                  Xem trên Solana Explorer
+                </a>
+              </div>
+            </div>,
+            { duration: 6000 }
+          );
+          
           // Refresh danh sách sau một khoảng thời gian ngắn
           setTimeout(() => {
         loadProposalsFromFirebase();
@@ -1018,8 +1034,16 @@ export function TransactionsContent() {
 
   // Kiểm tra người dùng đã ký đề xuất chưa trước khi thực hiện ký
   const hasCurrentUserSigned = (proposal: Proposal): boolean => {
-    if (!guardianPDA || !proposal.signers) return false;
-    return proposal.signers.includes(guardianPDA);
+    if (!guardianPDA || !proposal.signers || !guardianId) return false;
+    
+    // Check if guardianPDA is in the signers array
+    if (proposal.signers.includes(guardianPDA)) {
+      return true;
+    }
+    
+    // Also check for the guardian_ID format that's used in updateProposalSigners
+    const guardianIdFormat = `guardian_${guardianId}`;
+    return proposal.signers.includes(guardianIdFormat);
   };
 
   // Kiểm tra đề xuất đã đạt đủ số chữ ký theo ngưỡng yêu cầu chưa
@@ -1227,46 +1251,58 @@ export function TransactionsContent() {
                     exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.3 }}
                       className="overflow-hidden"
-                  >
-                      <Card className="bg-muted/30 rounded-t-none p-6 shadow-inner border-t-0 border-border/50">
+                    >
+                      <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 rounded-t-none p-6 shadow-lg border-t-0 border-slate-700/50 backdrop-blur-sm">
                         <div className="flex flex-col lg:flex-row gap-8">
                           <div className="space-y-5 flex-1">
-                            <h3 className="text-lg font-medium flex items-center">
-                              <FileText className="h-4 w-4 mr-2 text-primary/70" />
-                              Information
+                            <h3 className="text-lg font-medium flex items-center text-blue-100 bg-blue-500/10 px-4 py-2 rounded-lg shadow-inner backdrop-blur-sm border border-blue-500/30 w-auto inline-block">
+                              <FileText className="h-4 w-4 mr-2 text-blue-300" />
+                              Transaction Details
                             </h3>
-                            <div className="space-y-3 bg-background rounded-xl p-5 shadow-sm">
+                            <div className="space-y-3 bg-slate-800/50 backdrop-blur-sm rounded-xl p-5 shadow-sm border border-slate-700/50">
                               {transaction.type === "Transfer" ? (
                                 <>
-                                  <div className="flex flex-col space-y-5">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2">
-                                      <span className="text-muted-foreground font-medium">
+                                  <div className="flex flex-col space-y-4">
+                                    {/* From address */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
+                                      <span className="font-medium text-blue-200 bg-blue-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                        </svg>
                                         From
                                       </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md truncate max-w-[180px] inline-block overflow-hidden">
+                                      <div className="w-full">
+                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
                                           {transaction.proposal?.multisigAddress || "Your wallet"}
-                                        </span>
+                                        </div>
                                       </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2">
-                                      <span className="text-muted-foreground font-medium">
+                                    {/* To address */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
+                                      <span className="font-medium text-indigo-200 bg-indigo-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
                                         To
                                       </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md truncate max-w-[180px] inline-block overflow-hidden">
+                                      <div className="w-full">
+                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
                                           {transaction.proposal?.destination || "Unknown"}
-                                        </span>
+                                        </div>
                                       </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
-                                      <span className="text-muted-foreground font-medium">
+                                    {/* Amount */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
+                                      <span className="font-medium text-violet-200 bg-violet-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
                                         Amount
                                       </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="font-bold text-lg text-primary">
+                                      <div className="w-full flex justify-start">
+                                        <span className="font-bold text-base text-white bg-gradient-to-r from-violet-600 to-purple-700 px-4 py-2 rounded-md border border-violet-500/30 shadow-md">
                                           {(() => {
                                             // For SOL transfers
                                             if (transaction.proposal?.action === 'transfer') {
@@ -1301,63 +1337,82 @@ export function TransactionsContent() {
                                       </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
-                                      <span className="text-muted-foreground font-medium">
+                                    {/* Creation date */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                      <span className="font-medium text-emerald-200 bg-emerald-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                        </svg>
                                         Created
                                       </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="text-sm">{transaction.details.createdOn}</span>
+                                      <div className="w-full">
+                                        <span className="text-sm text-slate-300 bg-slate-900/50 px-3 py-1 rounded-md inline-block border border-slate-700/50">{transaction.details.createdOn}</span>
                                       </div>
                                     </div>
                                   </div>
                                 </>
                               ) : (
                                 <>
-                                  <div className="flex flex-col space-y-5">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2">
-                                      <span className="text-muted-foreground font-medium">
+                                  <div className="flex flex-col space-y-4">
+                                    {/* Guardian ID */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
+                                      <span className="font-medium text-purple-200 bg-purple-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[100px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                        </svg>
                                 Guardian ID
                               </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md inline-block">
+                                      <div className="w-full">
+                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
                                           {transaction.details.author}
-                                        </span>
                             </div>
+                                      </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
-                                      <span className="text-muted-foreground font-medium">
+                                    {/* Created date */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-slate-700/50">
+                                      <span className="font-medium text-emerald-200 bg-emerald-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[100px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                        </svg>
                                         Created
                               </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="text-sm">{transaction.details.createdOn}</span>
+                                      <div className="w-full">
+                                        <span className="text-sm text-slate-300 bg-slate-900/50 px-3 py-1 rounded-md inline-block border border-slate-700/50">{transaction.details.createdOn}</span>
                             </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 pt-2 border-t border-border/40">
-                                      <span className="text-muted-foreground font-medium">
+                                    {/* Invite code */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                      <span className="font-medium text-cyan-200 bg-cyan-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[100px] inline-flex items-center justify-center sm:justify-start">
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                                        </svg>
                                 Invite Code
                               </span>
-                                      <div className="md:col-span-2 text-left md:text-right">
-                                        <span className="font-mono text-sm bg-muted px-2 py-1 rounded-md inline-block">
+                                      <div className="w-full">
+                                        <div className="font-mono text-xs sm:text-sm bg-slate-900/70 px-3 py-2 rounded-md truncate inline-block max-w-full overflow-hidden text-slate-300 border border-slate-700/50 shadow-inner hover:bg-slate-900/90 transition-colors">
                                           {transaction.details.executedOn}
-                                        </span>
                             </div>
+                                      </div>
                                     </div>
                                   </div>
                                 </>
                               )}
                               {/* Add Solana Explorer link if there's a transaction signature */}
                             {transaction.proposal?.transactionSignature && transaction.proposal.status === "Executed" && (
-                                <div className="flex justify-between items-center pt-3 mt-2 border-t border-border/40">
-                                  <span className="text-muted-foreground font-medium">
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 mt-2 border-t border-slate-700/50">
+                                  <span className="font-medium text-amber-200 bg-amber-900/30 px-3 py-1 rounded-full shadow-inner text-xs min-w-[80px] inline-flex items-center justify-center sm:justify-start">
+                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
                                   Signature
                                 </span>
                                 <a
                                   href={createExplorerLink(transaction.proposal.transactionSignature)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                    className="text-blue-500 underline hover:text-blue-700 font-medium flex items-center"
+                                    className="text-blue-400 hover:text-blue-300 bg-blue-900/20 px-3 py-1 rounded-md font-medium flex items-center justify-center border border-blue-500/30 transition-colors hover:bg-blue-900/30"
                                 >
                                     <span>View on Solana Explorer</span>
                                     <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -1370,11 +1425,6 @@ export function TransactionsContent() {
                         </div>
 
                           <div className="space-y-4 flex-1">
-                            <h3 className="text-lg font-medium flex items-center">
-                              <ChevronUp className="h-4 w-4 mr-2 text-primary/70" />
-                              Actions
-                            </h3>
-
                           {transaction.isPendingGuardian && (
                               <div className="flex justify-end mt-3">
                               <Button
@@ -1383,7 +1433,7 @@ export function TransactionsContent() {
                                     transaction.guardianData!,
                                   )
                                 }
-                                  className="transition-all hover:scale-105 hover:shadow-md bg-primary"
+                                  className="transition-all duration-300 hover:scale-105 hover:shadow-lg bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold py-2 px-4 rounded-md border border-purple-700/50 shadow-md"
                               >
                                 Confirm
                               </Button>
@@ -1395,10 +1445,13 @@ export function TransactionsContent() {
                           
                             {/* Action buttons for proposal */}
                           {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
-                              <div className="space-y-3 bg-background rounded-xl p-5 shadow-sm">
+                              <div className="space-y-3 bg-slate-800/50 backdrop-blur-sm rounded-xl p-5 shadow-sm border border-slate-700/50">
                                 {/* Show notification when signed but threshold not met */}
                               {hasCurrentUserSigned(transaction.proposal) && !isReadyToExecute(transaction.proposal) && (
-                                  <div className="text-center text-yellow-600 bg-yellow-50 p-3 rounded-lg text-sm border border-yellow-200 mb-4">
+                                  <div className="text-center text-yellow-300 bg-yellow-900/30 p-3 rounded-lg text-sm border border-yellow-500/30 mb-4">
+                                    <svg className="w-5 h-5 mx-auto mb-1 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                    </svg>
                                     You have signed this proposal. {getMissingSignatureCount(transaction.proposal)} more signature(s) needed for execution.
                                 </div>
                               )}
@@ -1408,7 +1461,7 @@ export function TransactionsContent() {
                                 <Button
                                   onClick={() => handleSignProposal(transaction.proposal!)}
                                   disabled={isSigning || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
-                                    className="transition-all hover:scale-102 hover:shadow-md w-full bg-blue-600 hover:bg-blue-700"
+                                    className="transition-all duration-300 hover:scale-105 hover:shadow-lg w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold py-3 rounded-md border border-indigo-700/50 shadow-md relative overflow-hidden"
                                 >
                                   {isSigning && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
                                     <span className="flex items-center justify-center">
@@ -1416,7 +1469,12 @@ export function TransactionsContent() {
                                         Signing...
                                     </span>
                                   ) : (
-                                      "Sign Proposal"
+                                      <span className="flex items-center justify-center">
+                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                        </svg>
+                                        Sign Proposal
+                                      </span>
                                   )}
                                 </Button>
                               )}
@@ -1426,7 +1484,7 @@ export function TransactionsContent() {
                                 <Button
                                   onClick={() => handleExecuteProposal(transaction.proposal!)}
                                   disabled={isProcessing || (transaction.proposal && transaction.proposal.proposalId === activeProposalId)}
-                                    className="transition-all hover:scale-102 hover:shadow-md w-full bg-green-600 hover:bg-green-700"
+                                    className="transition-all duration-300 hover:scale-105 hover:shadow-lg w-full bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-semibold py-3 rounded-md border border-emerald-700/50 shadow-md relative overflow-hidden"
                                 >
                                   {isProcessing && transaction.proposal && transaction.proposal.proposalId === activeProposalId ? (
                                     <span className="flex items-center justify-center">
@@ -1434,61 +1492,83 @@ export function TransactionsContent() {
                                         Executing...
                                     </span>
                                   ) : (
-                                      "Execute Proposal"
+                                      <span className="flex items-center justify-center">
+                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Execute Proposal
+                                      </span>
                                   )}
                                 </Button>
                               )}
                             </div>
                           )}
-                            
-                            {/* Show completed status for executed transactions */}
-                            {transaction.proposal && transaction.status.toLowerCase() === "executed" && (
-                              <div className="bg-green-50 border border-green-200 rounded-xl p-5 shadow-sm">
-                                <div className="flex items-center justify-center space-x-2">
-                                  <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                  </svg>
-                                  <span className="font-medium text-green-700">Transaction completed successfully</span>
-                                </div>
-                              </div>
-                            )}
 
-                            {/* Signature status section */}
-                            <div className="bg-background rounded-xl p-5 shadow-sm">
-                              <h4 className="text-sm font-medium mb-3 flex items-center">
-                                <ChevronUp className="h-4 w-4 mr-2 text-primary/70" />
-                                Signature Status
-                              </h4>
-                              <div className="flex flex-col space-y-4">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <div className="bg-green-100 text-green-700 h-8 w-8 rounded-full flex items-center justify-center font-semibold text-sm">
-                                      {transaction.details.results.confirmed}
-                                    </div>
-                                    <span className="text-sm text-muted-foreground">Confirmed</span>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <div className="bg-red-100 text-red-700 h-8 w-8 rounded-full flex items-center justify-center font-semibold text-sm">
-                                      {transaction.details.results.rejected}
-                                    </div>
-                                    <span className="text-sm text-muted-foreground">Rejected</span>
-                                  </div>
-                                </div>
-                                
-                                <div className="flex items-center justify-between pt-2 border-t border-border/30">
-                                  <span className="text-sm font-medium">Required signatures:</span>
-                                  <div className="flex items-center gap-2">
-                                    <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-md flex items-center justify-center font-semibold text-sm">
-                                      {transaction.details.results.threshold}
-                                    </div>
-                                    {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
-                                      <span className="text-sm text-muted-foreground">
-                                        ({getMissingSignatureCount(transaction.proposal)} more needed)
-                                      </span>
-                                    )}
-                                  </div>
+                            <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl shadow-sm mt-4 overflow-hidden border border-slate-700/50">
+                              <div 
+                                className="flex items-center justify-between cursor-pointer p-4 border-b border-slate-700/50 bg-gradient-to-r from-slate-800/80 to-slate-700/80 hover:from-slate-700/80 hover:to-slate-600/80 transition-all"
+                                onClick={() => toggleSignature(transaction.id)}
+                              >
+                                <h4 className="text-sm font-medium flex items-center text-slate-200">
+                                  {expandedSignatures.has(transaction.id) ? (
+                                    <ChevronUp className="h-4 w-4 mr-2 text-cyan-400" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4 mr-2 text-cyan-400" />
+                                  )}
+                                  Signature Status
+                                </h4>
+                                <div className="flex items-center gap-1">
+                                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-500"></div>
+                                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-400"></div>
+                                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-300"></div>
                                 </div>
                               </div>
+                            
+                              <AnimatePresence>
+                                {expandedSignatures.has(transaction.id) && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: "auto", opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="p-5">
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div className="flex flex-col items-center p-3 bg-gradient-to-br from-slate-900/70 to-slate-800/70 rounded-lg border border-green-600/20">
+                                          <div className="bg-gradient-to-br from-green-600 to-emerald-600 text-white h-10 w-10 rounded-full flex items-center justify-center font-semibold text-sm mb-2 shadow-lg shadow-green-900/30">
+                                            {transaction.details.results.confirmed}
+                                          </div>
+                                          <span className="text-sm font-medium text-green-400">Confirmed</span>
+                                        </div>
+                                        
+                                        <div className="flex flex-col items-center p-3 bg-gradient-to-br from-slate-900/70 to-slate-800/70 rounded-lg border border-red-600/20">
+                                          <div className="bg-gradient-to-br from-red-600 to-rose-600 text-white h-10 w-10 rounded-full flex items-center justify-center font-semibold text-sm mb-2 shadow-lg shadow-red-900/30">
+                                            {transaction.details.results.rejected}
+                                          </div>
+                                          <span className="text-sm font-medium text-red-400">Rejected</span>
+                                        </div>
+                                      </div>
+                                    
+                                      {transaction.proposal && (
+                                        <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-700/50">
+                                          <span className="text-sm font-medium text-slate-400">Required signatures:</span>
+                                          <div className="flex items-center gap-2">
+                                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 py-1 rounded-md flex items-center justify-center font-semibold text-sm shadow-md">
+                                              {transaction.details.results.threshold}
+                                            </div>
+                                            {transaction.proposal && transaction.status.toLowerCase() !== "executed" && (
+                                              <span className="text-sm text-indigo-300">
+                                                ({getMissingSignatureCount(transaction.proposal)} more needed)
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
                             </div>
                         </div>
                       </div>

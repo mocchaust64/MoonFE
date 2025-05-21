@@ -14,12 +14,12 @@ export default function GuardianPage() {
   const inviteCode = params.inviteCode as string;
   const [isClient, setIsClient] = useState(false);
 
-  // Fix hydration mismatch bằng cách chỉ render component khi đã ở client
+  // Fix hydration mismatch by only rendering component on client-side
   useEffect(() => {
     setIsClient(true);
   }, []);
 
-  // Không render nội dung cho đến khi client-side hydration hoàn tất
+  // Don't render content until client-side hydration is complete
   if (!isClient) {
     return (
       <div className="min-h-screen w-full bg-gradient-to-b from-zinc-900 to-black flex items-center justify-center">

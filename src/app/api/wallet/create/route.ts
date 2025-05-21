@@ -64,28 +64,14 @@ export async function POST(req: Request) {
         // Không fail transaction nếu lưu Firebase thất bại
       }
     }
-    
-    // Airdrop 100 SOL vào địa chỉ ví mới tạo
-    try {
-      console.log("Requesting airdrop of 100 SOL to:", multisigPubkey.toString());
-      const airdropSignature = await connection.requestAirdrop(
-        multisigPubkey,
-        100 * 1000000000 // 100 SOL in lamports (1 SOL = 10^9 lamports)
-      );
-      
-      // Đợi xác nhận giao dịch airdrop
-      await connection.confirmTransaction(airdropSignature, 'confirmed');
-      console.log("Airdrop successful:", airdropSignature);
-    } catch (airdropError) {
-      console.error("Error during airdrop:", airdropError);
-      // Không fail transaction chính nếu airdrop thất bại
-    }
-
+      // Trả về kết quả
     return NextResponse.json({
       success: true,
       signature,
-      multisigPDA: multisigPubkey.toString(),
+      multisigAddress: multisigPDA,
     });
+    
+    
   } catch (error) {
     console.error("Error creating wallet:", error);
     return NextResponse.json(

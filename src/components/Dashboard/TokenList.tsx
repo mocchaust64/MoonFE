@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { PublicKey } from '@solana/web3.js';
 import { TokenInfo, getTokenAccounts } from '@/utils/tokenListUtils';
-import { Copy, ExternalLink } from 'lucide-react';
+import { Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import { connection } from "@/lib/solana";
@@ -14,24 +14,37 @@ interface TokenListProps {
 export function TokenList({ walletAddress }: TokenListProps) {
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    const fetchTokens = async () => {
-      if (!walletAddress) return;
-      
-      try {
-        setIsLoading(true);
-        const tokenInfos = await getTokenAccounts(connection, walletAddress);
-        setTokens(tokenInfos);
-      } catch (error) {
-        console.error('Error fetching tokens:', error);
-      } finally {
-        setIsLoading(false);
+  const fetchTokens = useCallback(async (showToast = false) => {
+    if (!walletAddress) return;
+    
+    try {
+      setIsRefreshing(true);
+      const tokenInfos = await getTokenAccounts(connection, walletAddress);
+      setTokens(tokenInfos);
+      if (showToast) {
+        toast.success("Token balances updated");
       }
-    };
-
-    fetchTokens();
+    } catch (error) {
+      console.error('Error fetching tokens:', error);
+      if (showToast) {
+        toast.error("Failed to update token balances");
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, [walletAddress]);
+
+  // Initial fetch khi component mount
+  useEffect(() => {
+    fetchTokens();
+  }, [fetchTokens]);
+
+  const handleRefresh = () => {
+    fetchTokens(true);
+  };
 
   const handleCopyAddress = (address: string) => {
     navigator.clipboard.writeText(address);
@@ -55,6 +68,19 @@ export function TokenList({ walletAddress }: TokenListProps) {
 
   return (
     <div className="space-y-3">
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-sm font-medium text-gray-400">Token Balances</h3>
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="h-8 w-8 rounded-full hover:bg-zinc-800/80"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+        >
+          <RefreshCw className={`h-4 w-4 text-gray-400 hover:text-blue-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+      
       {tokens.length === 0 ? (
         <motion.div
           initial={{ opacity: 0, y: 10 }}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,6 +19,7 @@ export function DashboardContent() {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [credentialId, setCredentialId] = useState<string | null>(null);
   const [guardianId, setGuardianId] = useState<number | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const router = useRouter();
   
   useEffect(() => {
@@ -70,6 +71,19 @@ export function DashboardContent() {
 
   const handleViewAllTransactions = () => {
     router.push('/transactions');
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchInfo();
+      toast.success("Wallet balance updated");
+    } catch (error) {
+      console.error("Error refreshing balance:", error);
+      toast.error("Failed to update wallet balance");
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   if (isLoading) {
@@ -210,8 +224,19 @@ export function DashboardContent() {
                   </div>
                   
                   <div className="space-y-2">
-                    <div className="text-gray-400 text-sm font-medium">
-                      Balance
+                    <div className="text-gray-400 text-sm font-medium flex justify-between items-center">
+                      <span>Balance</span>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-7 w-7 rounded-full hover:bg-zinc-800/80"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                      >
+                        <RefreshCw 
+                          className={`h-3.5 w-3.5 text-gray-400 hover:text-blue-400 ${isRefreshing ? 'animate-spin' : ''}`} 
+                        />
+                      </Button>
                     </div>
                     <div className="flex items-baseline justify-between">
                       <div className="text-4xl sm:text-5xl font-bold bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">

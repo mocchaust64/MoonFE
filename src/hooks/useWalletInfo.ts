@@ -7,10 +7,6 @@ import { useWalletStore } from "@/store/walletStore";
 import { getGuardiansFromBlockchain, Guardian } from "@/utils/guardianUtils";
 import { getWalletMetadata } from "@/lib/firebase/walletService";
 
-// Thời gian tối thiểu giữa các lần fetch (30 giây)
-const REFRESH_INTERVAL = 30000;
-// Thời gian giữa các lần fetch đầy đủ (5 phút)
-const FULL_REFRESH_INTERVAL = 300000;
 // Thời gian timeout cho mỗi request (15 giây)
 const FETCH_TIMEOUT = 15000;
 
@@ -42,12 +38,6 @@ export function useWalletInfo() {
   const isMountedRef = useRef<boolean>(true);
   // Ref để theo dõi nếu đang fetch
   const isFetchingRef = useRef<boolean>(false);
-  // Ref để theo dõi thời gian fetch lần cuối
-  const lastFetchTimeRef = useRef<number>(0);
-  // Ref để theo dõi thời gian fetch đầy đủ lần cuối
-  const lastFullFetchTimeRef = useRef<number>(0);
-  // Ref để theo dõi interval ID
-  const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   // Ref để theo dõi timeout ID
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -72,12 +62,9 @@ export function useWalletInfo() {
   }, []);
 
   // Hàm lấy chỉ số dư ví
-  const fetchBalanceOnly = useCallback(async (pubkey: PublicKey, now: number) => {
+  const fetchBalanceOnly = useCallback(async (pubkey: PublicKey) => {
     // Thiết lập timeout cho balance fetch
     const solBalance = await fetchWithTimeout(connection.getBalance(pubkey));
-    
-    // Cập nhật thời gian fetch
-    lastFetchTimeRef.current = now;
     
     // Chỉ cập nhật nếu có sự thay đổi đáng kể
     if (isMountedRef.current && Math.abs(solBalance - balance * LAMPORTS_PER_SOL) > 0.00001) {
@@ -145,7 +132,7 @@ export function useWalletInfo() {
   }, [setWalletData]);
 
   // Fetch đầy đủ thông tin ví
-  const fetchFullWalletInfo = useCallback(async (pubkey: PublicKey, now: number, solBalance: number) => {
+  const fetchFullWalletInfo = useCallback(async (pubkey: PublicKey, solBalance: number) => {
     // Lấy thông tin ví từ blockchain
     const accountInfo = await fetchWithTimeout(connection.getAccountInfo(pubkey));
     if (!accountInfo) {
@@ -167,9 +154,6 @@ export function useWalletInfo() {
     // Lấy tên ví
     const updatedWalletName = await getWalletNameFromSources(pubkey, multisigData, walletName);
     
-    // Cập nhật thời gian fetch đầy đủ
-    lastFullFetchTimeRef.current = now;
-    
     // Cập nhật dữ liệu vào store
     await updateWalletData(pubkey, solBalance, multisigData, updatedGuardians, updatedWalletName);
     
@@ -180,18 +164,6 @@ export function useWalletInfo() {
     // Kiểm tra các điều kiện tiên quyết
     if (!multisigPDA || isFetchingRef.current || !isMountedRef.current) {
       return;
-    }
-
-    const now = Date.now();
-    
-    // Kiểm tra thời gian cho phép refresh
-    if (!fetchFull && now - lastFetchTimeRef.current < REFRESH_INTERVAL) {
-      return;
-    }
-    
-    // Nếu chưa đến thời gian fetch đầy đủ, chỉ fetch balance
-    if (fetchFull && now - lastFullFetchTimeRef.current < FULL_REFRESH_INTERVAL) {
-      fetchFull = false;
     }
 
     try {
@@ -211,7 +183,7 @@ export function useWalletInfo() {
         : multisigPDA;
 
       // Lấy số dư ví
-      const solBalance = await fetchBalanceOnly(pubkey, now);
+      const solBalance = await fetchBalanceOnly(pubkey);
       
       // Nếu chỉ fetch balance thì dừng ở đây
       if (!fetchFull) {
@@ -219,7 +191,7 @@ export function useWalletInfo() {
       }
       
       // Fetch đầy đủ thông tin ví
-      await fetchFullWalletInfo(pubkey, now, solBalance);
+      await fetchFullWalletInfo(pubkey, solBalance);
       
     } catch (err) {
       if (isMountedRef.current) {
@@ -242,13 +214,13 @@ export function useWalletInfo() {
     fetchFullWalletInfo
   ]);
 
-  // Thiết lập polling khi component mount
+  // Thiết lập initial fetch khi component mount
   useEffect(() => {
     isMountedRef.current = true;
     
     if (!multisigPDA) return;
     
-    // Fetch dữ liệu ban đầu
+    // Fetch dữ liệu ban đầu khi vừa mở app
     fetchWalletData(true);
     
     // Đảm bảo loading không bị kẹt
@@ -259,16 +231,14 @@ export function useWalletInfo() {
       }
     }, FETCH_TIMEOUT + 1000);
     
-    // Thiết lập interval cho việc fetch định kỳ
-    intervalIdRef.current = setInterval(() => {
-      if (isMountedRef.current && !isFetchingRef.current) {
-        // Kiểm tra xem đã đến lúc fetch đầy đủ chưa
-        const now = Date.now();
-        const shouldFetchFull = now - lastFullFetchTimeRef.current >= FULL_REFRESH_INTERVAL;
-        
-        fetchWalletData(shouldFetchFull);
+    // Thêm event listener cho visibility change để fetch khi từ background sang foreground
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && multisigPDA) {
+        fetchWalletData(true);
       }
-    }, REFRESH_INTERVAL);
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     
     // Cleanup khi component unmount
     return () => {
@@ -279,10 +249,7 @@ export function useWalletInfo() {
         timeoutIdRef.current = null;
       }
       
-      if (intervalIdRef.current) {
-        clearInterval(intervalIdRef.current);
-        intervalIdRef.current = null;
-      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [multisigPDA, fetchWalletData, isLoading, setLoading]);
 
@@ -302,7 +269,7 @@ export function useWalletInfo() {
     lastUpdated,
     isLoading,
     error,
-    // Các hàm
+    // Các hàm để fetch theo demand
     fetchInfo: useCallback(() => fetchWalletData(true), [fetchWalletData]),
     fetchBalance: useCallback(() => fetchWalletData(false), [fetchWalletData]),
     formatAddress,

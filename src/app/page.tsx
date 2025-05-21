@@ -108,7 +108,7 @@ export default function Home() {
             variants={itemVariants}
             className="text-gray-300 mx-auto max-w-3xl text-base md:text-lg mb-12 leading-relaxed"
           >
-            Experience the future of digital asset management with our secure, multi-signature wallet featuring biometric authentication and social recovery.
+            Experience the future of digital asset management with our secure, multi-signature wallet featuring enhanced security and easy access recovery.
           </motion.p>
 
           {/* Action buttons */}
@@ -142,7 +142,7 @@ export default function Home() {
               <svg className="h-4 w-4 text-gray-500 group-hover:text-blue-400 transition-colors duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
-              Lost access? Recover here
+              Mất quyền truy cập? Khôi phục dễ dàng tại đây
             </Link>
           </motion.div>
         </motion.div>

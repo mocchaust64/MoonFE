@@ -10,17 +10,17 @@ import IDL from "../../../idl.json";
 import { createFeePayerKeypair } from "./keypairs";
 
 // Constants
-const RPC_ENDPOINT = "https://coyote-needed-blowfish.ngrok-free.app";
+const RPC_ENDPOINT = "https://api.devnet.solana.com";
 
 // Connection Configuration
 const connectionOptions = {
   commitment: "confirmed" as Commitment,
   confirmTransactionInitialTimeout: 30000,
   disableRetryOnRateLimit: false,
-  wsEndpoint: "wss://5584-113-22-202-13.ngrok-free.app",
   useWebSocket: true,
   skipPreflight: true,
 };
+
 
 // Solana Connection
 export const connection = new Connection(RPC_ENDPOINT, connectionOptions);
@@ -52,13 +52,7 @@ const provider = new AnchorProvider(
 
 // ProgramID from IDL
 export const PROGRAM_ID = new PublicKey(IDL.address);
-
-// Tạo program instance cho Anchor 0.31.0
-// Trong Anchor 0.31.0, constructor của Program có các tham số:
-// 1. idl: any
-// 2. provider?: Provider (tùy chọn)
 export const program = new Program<Idl>(IDL as Idl, provider);
 
-// Re-export program types
 export type MoonWalletProgram = typeof program;
 export type { Idl };
