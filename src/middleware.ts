@@ -2,31 +2,29 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
-  // Get response
-  const response = NextResponse.next();
+  // Lấy IP từ các header khác nhau
+  const ip = 
+    request.headers.get('x-real-ip') ||
+    request.headers.get('x-forwarded-for')?.split(',')[0] ||
+    request.headers.get('cf-connecting-ip') ||
+    request.headers.get('true-client-ip') ||
+    'unknown';
 
-  // Add CORS headers
-  response.headers.set("Access-Control-Allow-Origin", "*");
-  response.headers.set(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, OPTIONS",
-  );
-  response.headers.set(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization",
-  );
+  // Thêm IP vào header để sử dụng ở các route handlers
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-client-ip', ip);
 
-  // Handle preflight requests
-  if (request.method === "OPTIONS") {
-    return new NextResponse(null, {
-      status: 200,
-      headers: response.headers,
-    });
-  }
+  // Log IP để debug
+  console.log('Middleware detected IP:', ip);
+  console.log('All headers:', Object.fromEntries(requestHeaders.entries()));
 
-  return response;
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 export const config = {
-  matcher: "/api/:path*",
+  matcher: "/api/wallet/check-ip",
 };

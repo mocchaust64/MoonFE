@@ -4,12 +4,12 @@ import type { NextRequest } from "next/server";
 
 const getClientIP = (req: Request) => {
   const headers = req.headers;
-  const ip = 
-    headers.get('x-real-ip') || // Nginx proxy
-    headers.get('x-forwarded-for')?.split(',')[0] || // Standard proxy
-    headers.get('cf-connecting-ip') || // Cloudflare
-    headers.get('true-client-ip') || // Akamai
-    'unknown';
+  console.log('All headers:', Object.fromEntries(headers.entries()));
+  
+  // Ưu tiên lấy IP từ header x-client-ip được set bởi middleware
+  const ip = headers.get('x-client-ip') || 'unknown';
+    
+  console.log('Detected IP:', ip);
   return ip;
 };
 
@@ -17,8 +17,10 @@ export async function POST(req: Request) {
   try {
     // Lấy IP từ request headers
     const ip = getClientIP(req);
+    console.log('Using IP for check:', ip);
 
     const { walletAddress } = await req.json();
+    console.log('Wallet address:', walletAddress);
 
     if (!walletAddress) {
       return NextResponse.json(
@@ -29,6 +31,7 @@ export async function POST(req: Request) {
 
     // Kiểm tra xem IP đã tạo ví chưa
     const hasCreatedWallet = await checkIPCreatedWallet(ip);
+    console.log('Has created wallet:', hasCreatedWallet);
 
     if (hasCreatedWallet) {
       return NextResponse.json({
@@ -39,6 +42,7 @@ export async function POST(req: Request) {
 
     // Lưu thông tin IP và ví
     await saveIPRecord(ip, walletAddress);
+    console.log('Saved IP record for:', ip);
 
     return NextResponse.json({
       canReceiveSOL: true,
