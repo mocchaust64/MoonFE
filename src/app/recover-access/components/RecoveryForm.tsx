@@ -238,7 +238,7 @@ export function RecoveryForm({ currentStep, onStepChange }: RecoveryFormProps) {
                   </p>
                 </div>
               )}
-            </div>
+              </div>
             
             <div className="space-y-2">
               <label htmlFor="new-username" className="block text-sm font-medium text-gray-300 mb-1">New Guardian Name</label>

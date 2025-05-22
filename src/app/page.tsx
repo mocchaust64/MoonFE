@@ -36,6 +36,15 @@ export default function Home() {
               Experience the future of digital asset management with our secure,
               simple, and powerful multisig wallet
             </p>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+              <p className="text-blue-700 font-medium">
+                🎁 Get 10 SOL airdrop when you create your first wallet!
+              </p>
+              <p className="text-blue-600 text-sm mt-1">
+                Limited to one airdrop per IP address
+              </p>
+            </div>
           </div>
 
           {/* Action buttons */}

@@ -246,7 +246,7 @@ export function useWalletInfo() {
     
     // Fetch dữ liệu ban đầu khi vừa mở app, nhưng tôn trọng thời gian fetch
     if (canFetchAgain()) {
-      fetchWalletData(true);
+    fetchWalletData(true);
     }
     
     // Đảm bảo loading không bị kẹt
@@ -262,7 +262,7 @@ export function useWalletInfo() {
       if (document.visibilityState === 'visible' && multisigPDA) {
         // Khi quay lại tab, cần fetch lại nhưng tôn trọng thời gian fetch
         if (canFetchAgain()) {
-          fetchWalletData(true);
+        fetchWalletData(true);
         }
       }
     };

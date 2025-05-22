@@ -1,4 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
+
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import {
 } from "@/lib/firebase/guardianService";
 import { useWalletInfo } from "@/hooks/useWalletInfo";
 import { GuardianData } from "@/types/guardian";
-import { getGuardianPDA } from "@/utils/credentialUtils";
 
 interface GuardianConfirmProps {
   isOpen: boolean;
@@ -55,12 +54,8 @@ export function GuardianConfirm({
         return;
       }
 
-      // 2. Calculate guardian PDA using the utility function
-      const multisigPublicKey = new PublicKey(multisigPDA);
-      const guardianPDA = getGuardianPDA(
-        multisigPublicKey,
-        guardianData.guardianId,
-      );
+     
+     
 
       // 3. Call API to add guardian
       const response = await fetch("/api/guardian/add", {
