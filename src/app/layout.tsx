@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { GoogleAnalytics } from '@next/third-parties/google'
 
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import Header from "@/components/layout/header";
@@ -38,6 +39,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="bg-background h-full">
+      <GoogleAnalytics gaId="GTM-KJF49R9K" />
       <body
         className={cn(
           "min-h-screen font-sans antialiased",
