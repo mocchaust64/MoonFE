@@ -4,8 +4,7 @@ import {
   setDoc, 
   query, 
   where, 
-  getDocs,
-  deleteDoc
+  getDocs
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -51,27 +50,6 @@ export const saveIPRecord = async (ip: string, walletAddress: string): Promise<v
     });
   } catch (error) {
     console.error("Lỗi khi lưu IP record:", error);
-    throw error;
-  }
-};
-
-/**
- * Xóa tất cả IP records
- */
-export const deleteAllIPRecords = async (): Promise<void> => {
-  try {
-    const ipRef = collection(db, "ip_records");
-    const querySnapshot = await getDocs(ipRef);
-    
-    // Xóa từng document
-    const deletePromises = querySnapshot.docs.map(doc => 
-      deleteDoc(doc.ref)
-    );
-    
-    await Promise.all(deletePromises);
-    console.log("Đã xóa tất cả IP records");
-  } catch (error) {
-    console.error("Lỗi khi xóa IP records:", error);
     throw error;
   }
 };
